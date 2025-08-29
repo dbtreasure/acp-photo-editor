@@ -33,7 +33,8 @@ describe('EditStackManager', () => {
       const stack = manager.getStack();
       expect(stack.ops).toHaveLength(1);
       expect(stack.ops[0].op).toBe('crop');
-      expect(stack.ops[0].rectNorm).toEqual([0.1, 0.2, 0.5, 0.6]);
+      const cropOp = stack.ops[0] as any;
+      expect(cropOp.rectNorm).toEqual([0.1, 0.2, 0.5, 0.6]);
       expect(stack.ops[0].id).toMatch(/^op_\d+$/);
     });
 
@@ -43,7 +44,8 @@ describe('EditStackManager', () => {
       });
 
       const stack = manager.getStack();
-      const rect = stack.ops[0].rectNorm!;
+      const cropOp = stack.ops[0] as any;
+      const rect = cropOp.rectNorm!;
       expect(rect[0]).toBeGreaterThanOrEqual(0);
       expect(rect[1]).toBeLessThanOrEqual(1);
       expect(rect[2]).toBeGreaterThan(0);
@@ -56,7 +58,8 @@ describe('EditStackManager', () => {
       });
 
       const stack = manager.getStack();
-      expect(stack.ops[0].angleDeg).toBe(45.5);
+      const cropOp = stack.ops[0] as any;
+      expect(cropOp.angleDeg).toBe(45.5);
     });
 
     it('should normalize angle to [-180, 180]', () => {
@@ -65,7 +68,8 @@ describe('EditStackManager', () => {
       });
 
       const stack = manager.getStack();
-      expect(stack.ops[0].angleDeg).toBe(-90);
+      const cropOp = stack.ops[0] as any;
+      expect(cropOp.angleDeg).toBe(-90);
     });
 
     it('should add crop with aspect', () => {
@@ -74,7 +78,8 @@ describe('EditStackManager', () => {
       });
 
       const stack = manager.getStack();
-      expect(stack.ops[0].aspect).toBe('16:9');
+      const cropOp = stack.ops[0] as any;
+      expect(cropOp.aspect).toBe('16:9');
     });
 
     it('should amend last crop by default', () => {
@@ -83,8 +88,9 @@ describe('EditStackManager', () => {
 
       const stack = manager.getStack();
       expect(stack.ops).toHaveLength(1);
-      expect(stack.ops[0].angleDeg).toBe(15);
-      expect(stack.ops[0].rectNorm).toBeUndefined();
+      const cropOp = stack.ops[0] as any;
+      expect(cropOp.angleDeg).toBe(15);
+      expect(cropOp.rectNorm).toBeUndefined();
     });
 
     it('should append new crop with forceNew flag', () => {
@@ -93,8 +99,10 @@ describe('EditStackManager', () => {
 
       const stack = manager.getStack();
       expect(stack.ops).toHaveLength(2);
-      expect(stack.ops[0].rectNorm).toEqual([0.1, 0.1, 0.8, 0.8]);
-      expect(stack.ops[1].angleDeg).toBe(15);
+      const cropOp1 = stack.ops[0] as any;
+      const cropOp2 = stack.ops[1] as any;
+      expect(cropOp1.rectNorm).toEqual([0.1, 0.1, 0.8, 0.8]);
+      expect(cropOp2.angleDeg).toBe(15);
     });
   });
 
@@ -262,6 +270,252 @@ describe('EditStackManager', () => {
       const hash2 = manager.computeHash();
       
       expect(hash1).not.toBe(hash2);
+    });
+  });
+
+  describe('white balance operations', () => {
+    it('should add white balance with gray point', () => {
+      manager.addWhiteBalance({
+        method: 'gray_point',
+        x: 0.5,
+        y: 0.3
+      });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(1);
+      expect(stack.ops[0].op).toBe('white_balance');
+      const wbOp = stack.ops[0] as any;
+      expect(wbOp.method).toBe('gray_point');
+      expect(wbOp.x).toBe(0.5);
+      expect(wbOp.y).toBe(0.3);
+    });
+
+    it('should clamp gray point coordinates', () => {
+      manager.addWhiteBalance({
+        method: 'gray_point',
+        x: 1.5,
+        y: -0.2
+      });
+
+      const stack = manager.getStack();
+      const wbOp = stack.ops[0] as any;
+      expect(wbOp.x).toBe(1);
+      expect(wbOp.y).toBe(0);
+    });
+
+    it('should add white balance with temp/tint', () => {
+      manager.addWhiteBalance({
+        method: 'temp_tint',
+        temp: 20,
+        tint: -10
+      });
+
+      const stack = manager.getStack();
+      const wbOp = stack.ops[0] as any;
+      expect(wbOp.method).toBe('temp_tint');
+      expect(wbOp.temp).toBe(20);
+      expect(wbOp.tint).toBe(-10);
+    });
+
+    it('should clamp temp/tint values', () => {
+      manager.addWhiteBalance({
+        method: 'temp_tint',
+        temp: 150,
+        tint: -120
+      });
+
+      const stack = manager.getStack();
+      const wbOp = stack.ops[0] as any;
+      expect(wbOp.temp).toBe(100);
+      expect(wbOp.tint).toBe(-100);
+    });
+
+    it('should amend last white balance by default', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.5, y: 0.5 });
+      manager.addWhiteBalance({ method: 'temp_tint', temp: 10 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(1);
+      const wbOp = stack.ops[0] as any;
+      expect(wbOp.method).toBe('temp_tint');
+      expect(wbOp.temp).toBe(10);
+    });
+
+    it('should append new white balance with forceNew', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.5, y: 0.5 });
+      manager.addWhiteBalance({ method: 'temp_tint', temp: 10, forceNew: true });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(2);
+    });
+  });
+
+  describe('exposure operations', () => {
+    it('should add exposure adjustment', () => {
+      manager.addExposure({ ev: 1.5 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(1);
+      expect(stack.ops[0].op).toBe('exposure');
+      const expOp = stack.ops[0] as any;
+      expect(expOp.ev).toBe(1.5);
+    });
+
+    it('should clamp exposure values', () => {
+      manager.addExposure({ ev: 5 });
+
+      const stack = manager.getStack();
+      const expOp = stack.ops[0] as any;
+      expect(expOp.ev).toBe(3);
+    });
+
+    it('should clamp negative exposure values', () => {
+      manager.addExposure({ ev: -5 });
+
+      const stack = manager.getStack();
+      const expOp = stack.ops[0] as any;
+      expect(expOp.ev).toBe(-3);
+    });
+
+    it('should amend last exposure by default', () => {
+      manager.addExposure({ ev: 1 });
+      manager.addExposure({ ev: 2 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(1);
+      const expOp = stack.ops[0] as any;
+      expect(expOp.ev).toBe(2);
+    });
+  });
+
+  describe('contrast operations', () => {
+    it('should add contrast adjustment', () => {
+      manager.addContrast({ amt: 25 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(1);
+      expect(stack.ops[0].op).toBe('contrast');
+      const conOp = stack.ops[0] as any;
+      expect(conOp.amt).toBe(25);
+    });
+
+    it('should clamp contrast values', () => {
+      manager.addContrast({ amt: 150 });
+
+      const stack = manager.getStack();
+      const conOp = stack.ops[0] as any;
+      expect(conOp.amt).toBe(100);
+    });
+
+    it('should clamp negative contrast values', () => {
+      manager.addContrast({ amt: -150 });
+
+      const stack = manager.getStack();
+      const conOp = stack.ops[0] as any;
+      expect(conOp.amt).toBe(-100);
+    });
+
+    it('should amend last contrast by default', () => {
+      manager.addContrast({ amt: 10 });
+      manager.addContrast({ amt: 20 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(1);
+      const conOp = stack.ops[0] as any;
+      expect(conOp.amt).toBe(20);
+    });
+  });
+
+  describe('mixed operations and amend-last by kind', () => {
+    it('should keep different operation types separate', () => {
+      manager.addCrop({ angleDeg: 10 });
+      manager.addWhiteBalance({ method: 'temp_tint', temp: 5 });
+      manager.addExposure({ ev: 1 });
+      manager.addContrast({ amt: 20 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(4);
+      expect(stack.ops[0].op).toBe('crop');
+      expect(stack.ops[1].op).toBe('white_balance');
+      expect(stack.ops[2].op).toBe('exposure');
+      expect(stack.ops[3].op).toBe('contrast');
+    });
+
+    it('should amend only the last op of the same kind', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.5, y: 0.5 });
+      manager.addCrop({ angleDeg: 10 });
+      manager.addWhiteBalance({ method: 'temp_tint', temp: 10 });
+
+      const stack = manager.getStack();
+      expect(stack.ops).toHaveLength(2);
+      expect(stack.ops[0].op).toBe('white_balance');
+      expect(stack.ops[1].op).toBe('crop');
+      const wbOp = stack.ops[0] as any;
+      expect(wbOp.method).toBe('temp_tint');
+    });
+  });
+
+  describe('stack summary', () => {
+    it('should generate correct summary for white balance', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.42, y: 0.37 });
+      expect(manager.getStackSummary()).toContain('WB(gray 0.42,0.37)');
+    });
+
+    it('should generate correct summary for exposure', () => {
+      manager.addExposure({ ev: 0.35 });
+      expect(manager.getStackSummary()).toContain('EV +0.35');
+    });
+
+    it('should generate correct summary for contrast', () => {
+      manager.addContrast({ amt: 12 });
+      expect(manager.getStackSummary()).toContain('Contrast +12');
+    });
+
+    it('should generate full stack summary', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.42, y: 0.37 });
+      manager.addExposure({ ev: 0.35 });
+      manager.addContrast({ amt: 12 });
+      manager.addCrop({ aspect: '1:1', angleDeg: -1.0 });
+
+      const summary = manager.getStackSummary();
+      expect(summary).toContain('WB(gray 0.42,0.37)');
+      expect(summary).toContain('EV +0.35');
+      expect(summary).toContain('Contrast +12');
+      expect(summary).toContain('Crop 1:1');
+      expect(summary).toContain('•');
+    });
+  });
+
+  describe('undo/redo with color operations', () => {
+    it('should undo color operations', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.5, y: 0.5 });
+      manager.addExposure({ ev: 1 });
+      
+      expect(manager.getStackLength()).toBe(2);
+      
+      manager.undo();
+      expect(manager.getStackLength()).toBe(1);
+      expect(manager.getStack().ops[0].op).toBe('white_balance');
+      
+      manager.undo();
+      expect(manager.getStackLength()).toBe(0);
+    });
+
+    it('should redo color operations', () => {
+      manager.addWhiteBalance({ method: 'gray_point', x: 0.5, y: 0.5 });
+      manager.addExposure({ ev: 1 });
+      manager.undo();
+      manager.undo();
+      
+      expect(manager.getStackLength()).toBe(0);
+      
+      manager.redo();
+      expect(manager.getStackLength()).toBe(1);
+      expect(manager.getStack().ops[0].op).toBe('white_balance');
+      
+      manager.redo();
+      expect(manager.getStackLength()).toBe(2);
+      expect(manager.getStack().ops[1].op).toBe('exposure');
     });
   });
 });

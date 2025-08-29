@@ -131,8 +131,9 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       return;
     }
     
-    // Check for edit commands (crop, undo, redo, reset)
-    if (text.startsWith(':crop') || text === ':undo' || text === ':redo' || text === ':reset') {
+    // Check for edit commands (crop, undo, redo, reset, white balance, exposure, contrast)
+    if (text.startsWith(':crop') || text === ':undo' || text === ':redo' || text === ':reset' ||
+        text.startsWith(':wb') || text.startsWith(':exposure') || text.startsWith(':contrast')) {
       handleEditCommand(text, currentSessionId).then(
         () => {
           if (!cancelled) {
@@ -478,6 +479,76 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     
     // Add crop operation to stack
     stackManager.addCrop(cropOptions);
+  } else if (command.startsWith(':wb')) {
+    // Parse white balance arguments
+    const args = command.substring(3).trim();
+    const wbOptions: any = {};
+    
+    // Parse --gray point
+    const grayMatch = args.match(/--gray\s+([\d.,]+)/);
+    if (grayMatch) {
+      const coords = grayMatch[1].split(',').map(parseFloat);
+      if (coords.length === 2) {
+        wbOptions.method = 'gray_point';
+        wbOptions.x = coords[0];
+        wbOptions.y = coords[1];
+      }
+    }
+    
+    // Parse --temp and --tint
+    const tempMatch = args.match(/--temp\s+([-\d]+)/);
+    const tintMatch = args.match(/--tint\s+([-\d]+)/);
+    if (tempMatch || tintMatch) {
+      wbOptions.method = 'temp_tint';
+      if (tempMatch) wbOptions.temp = parseInt(tempMatch[1]);
+      if (tintMatch) wbOptions.tint = parseInt(tintMatch[1]);
+    }
+    
+    // Parse --new-op flag
+    wbOptions.forceNew = args.includes('--new-op');
+    
+    if (!wbOptions.method) {
+      throw new Error('White balance requires either --gray x,y or --temp/--tint');
+    }
+    
+    // Add white balance operation to stack
+    stackManager.addWhiteBalance(wbOptions);
+  } else if (command.startsWith(':exposure')) {
+    // Parse exposure arguments
+    const args = command.substring(9).trim();
+    const expOptions: any = {};
+    
+    // Parse --ev
+    const evMatch = args.match(/--ev\s+([-\d.]+)/);
+    if (evMatch) {
+      expOptions.ev = parseFloat(evMatch[1]);
+    } else {
+      throw new Error('Exposure requires --ev value');
+    }
+    
+    // Parse --new-op flag
+    expOptions.forceNew = args.includes('--new-op');
+    
+    // Add exposure operation to stack
+    stackManager.addExposure(expOptions);
+  } else if (command.startsWith(':contrast')) {
+    // Parse contrast arguments
+    const args = command.substring(9).trim();
+    const conOptions: any = {};
+    
+    // Parse --amt
+    const amtMatch = args.match(/--amt\s+([-\d]+)/);
+    if (amtMatch) {
+      conOptions.amt = parseInt(amtMatch[1]);
+    } else {
+      throw new Error('Contrast requires --amt value');
+    }
+    
+    // Parse --new-op flag
+    conOptions.forceNew = args.includes('--new-op');
+    
+    // Add contrast operation to stack
+    stackManager.addContrast(conOptions);
   } else {
     throw new Error(`Unknown command: ${command}`);
   }
@@ -509,7 +580,7 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     });
     
     // Send stack info
-    const stackInfo = `Stack: ${stackManager.getStackLength()} ops | Last: ${stackManager.getLastOpSummary()}`;
+    const stackInfo = `Stack: ${stackManager.getStackSummary()}`;
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',

@@ -193,6 +193,17 @@ async function main() {
       console.log('Commands:');
       console.log('  :ping            - Send a ping message to the agent');
       console.log('  :open <path...>  - Open image file(s)');
+      console.log('  :wb [options]    - Adjust white balance');
+      console.log('    --gray x,y     - Set gray point (0-1 normalized)');
+      console.log('    --temp n       - Temperature adjustment (-100 to 100)');
+      console.log('    --tint n       - Tint adjustment (-100 to 100)');
+      console.log('    --new-op       - Force new operation (don\'t amend last)');
+      console.log('  :exposure        - Adjust exposure');
+      console.log('    --ev n         - Exposure value (-3 to 3 stops)');
+      console.log('    --new-op       - Force new operation (don\'t amend last)');
+      console.log('  :contrast        - Adjust contrast');
+      console.log('    --amt n        - Contrast amount (-100 to 100)');
+      console.log('    --new-op       - Force new operation (don\'t amend last)');
       console.log('  :crop [options]  - Apply crop/straighten to current image');
       console.log('    --aspect 1:1   - Crop to aspect ratio (1:1, 16:9, 3:2, etc)');
       console.log('    --rect x,y,w,h - Crop to normalized rectangle [0-1]');
@@ -283,7 +294,8 @@ async function main() {
             }
             isPrompting = false;
           }
-        } else if (cmd.startsWith(':crop') || cmd === ':undo' || cmd === ':redo' || cmd === ':reset') {
+        } else if (cmd.startsWith(':crop') || cmd === ':undo' || cmd === ':redo' || cmd === ':reset' ||
+                   cmd.startsWith(':wb') || cmd.startsWith(':exposure') || cmd.startsWith(':contrast')) {
           // Handle edit commands
           if (isPrompting) {
             console.log('A prompt is already in progress. Use :cancel to cancel it.');

@@ -15,7 +15,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
-import { EditStack, EditOp } from '../src/editStack.js';
+import { EditStack, EditOp, CropOp, WhiteBalanceOp, ExposureOp, ContrastOp } from '../src/editStack.js';
+import { applyColorOperations } from '../src/imageProcessing.js';
 import { randomBytes } from 'crypto';
 import { rename } from 'fs/promises';
 
@@ -31,18 +32,45 @@ const RenderThumbnailArgsSchema = z.object({
   maxPx: z.number().int().positive().default(1024)
 });
 
+const EditOpSchema = z.discriminatedUnion('op', [
+  // Crop operation
+  z.object({
+    id: z.string(),
+    op: z.literal('crop'),
+    rectNorm: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+    angleDeg: z.number().optional(),
+    aspect: z.string().optional()
+  }),
+  // White balance operation
+  z.object({
+    id: z.string(),
+    op: z.literal('white_balance'),
+    method: z.enum(['gray_point', 'temp_tint']),
+    x: z.number().min(0).max(1).optional(),
+    y: z.number().min(0).max(1).optional(),
+    temp: z.number().min(-100).max(100).optional(),
+    tint: z.number().min(-100).max(100).optional()
+  }),
+  // Exposure operation
+  z.object({
+    id: z.string(),
+    op: z.literal('exposure'),
+    ev: z.number().min(-3).max(3)
+  }),
+  // Contrast operation
+  z.object({
+    id: z.string(),
+    op: z.literal('contrast'),
+    amt: z.number().min(-100).max(100)
+  })
+]);
+
 const RenderPreviewArgsSchema = z.object({
   uri: z.url(),
   editStack: z.object({
     version: z.literal(1),
     baseUri: z.string(),
-    ops: z.array(z.object({
-      id: z.string(),
-      op: z.literal('crop'),
-      rectNorm: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
-      angleDeg: z.number().optional(),
-      aspect: z.string().optional()
-    }))
+    ops: z.array(EditOpSchema)
   }),
   maxPx: z.number().int().positive().default(1024)
 });
@@ -58,13 +86,7 @@ const CommitVersionArgsSchema = z.object({
   editStack: z.object({
     version: z.literal(1),
     baseUri: z.string(),
-    ops: z.array(z.object({
-      id: z.string(),
-      op: z.literal('crop'),
-      rectNorm: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
-      angleDeg: z.number().optional(),
-      aspect: z.string().optional()
-    }))
+    ops: z.array(EditOpSchema)
   }),
   dstUri: z.url(),
   format: z.enum(['jpeg', 'png']).optional().default('jpeg'),
@@ -542,39 +564,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const originalWidth = metadata.width || 1;
       const originalHeight = metadata.height || 1;
       
-      // Apply operations in order
+      // Separate operations by type (color before geometry as per PRD)
+      const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp> = [];
+      const geometryOps: CropOp[] = [];
+      
       for (const op of editStack.ops) {
-        if (op.op === 'crop') {
-          // Apply crop first if rect is specified
-          if (op.rectNorm) {
-            const [x, y, w, h] = op.rectNorm;
-            
-            // Convert normalized coordinates to pixels
-            const cropX = Math.round(x * originalWidth);
-            const cropY = Math.round(y * originalHeight);
-            const cropWidth = Math.round(w * originalWidth);
-            const cropHeight = Math.round(h * originalHeight);
-            
-            // Validate and clamp crop region
-            const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
-            const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
-            const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
-            const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
-            
-            pipeline = pipeline.extract({
-              left: safeX,
-              top: safeY,
-              width: safeWidth,
-              height: safeHeight
-            });
-          }
+        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast') {
+          colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp);
+        } else if (op.op === 'crop') {
+          geometryOps.push(op as CropOp);
+        }
+      }
+      
+      // Apply color operations first (white balance → exposure → contrast)
+      if (colorOps.length > 0) {
+        pipeline = await applyColorOperations(pipeline, colorOps, metadata);
+      }
+      
+      // Then apply geometry operations (crop, rotate)
+      for (const op of geometryOps) {
+        // Apply crop first if rect is specified
+        if (op.rectNorm) {
+          const [x, y, w, h] = op.rectNorm;
           
-          // Apply rotation after crop if specified
-          if (op.angleDeg !== undefined && op.angleDeg !== 0) {
-            pipeline = pipeline.rotate(op.angleDeg, {
-              background: { r: 0, g: 0, b: 0, alpha: 0 }
-            });
-          }
+          // Convert normalized coordinates to pixels
+          const cropX = Math.round(x * originalWidth);
+          const cropY = Math.round(y * originalHeight);
+          const cropWidth = Math.round(w * originalWidth);
+          const cropHeight = Math.round(h * originalHeight);
+          
+          // Validate and clamp crop region
+          const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
+          const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
+          const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
+          const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
+          
+          pipeline = pipeline.extract({
+            left: safeX,
+            top: safeY,
+            width: safeWidth,
+            height: safeHeight
+          });
+        }
+        
+        // Apply rotation after crop if specified
+        if (op.angleDeg !== undefined && op.angleDeg !== 0) {
+          pipeline = pipeline.rotate(op.angleDeg, {
+            background: { r: 0, g: 0, b: 0, alpha: 0 }
+          });
         }
       }
       
@@ -745,39 +782,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const originalWidth = metadata.width || 1;
       const originalHeight = metadata.height || 1;
       
-      // Apply operations (crop then rotate as per Phase 3 fix)
+      // Separate operations by type (color before geometry as per PRD)
+      const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp> = [];
+      const geometryOps: CropOp[] = [];
+      
       for (const op of editStack.ops) {
-        if (op.op === 'crop') {
-          // Apply crop first if rect is specified
-          if (op.rectNorm) {
-            const [x, y, w, h] = op.rectNorm;
-            
-            // Convert normalized coordinates to pixels
-            const cropX = Math.round(x * originalWidth);
-            const cropY = Math.round(y * originalHeight);
-            const cropWidth = Math.round(w * originalWidth);
-            const cropHeight = Math.round(h * originalHeight);
-            
-            // Validate and clamp crop region
-            const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
-            const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
-            const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
-            const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
-            
-            pipeline = pipeline.extract({
-              left: safeX,
-              top: safeY,
-              width: safeWidth,
-              height: safeHeight
-            });
-          }
+        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast') {
+          colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp);
+        } else if (op.op === 'crop') {
+          geometryOps.push(op as CropOp);
+        }
+      }
+      
+      // Apply color operations first (white balance → exposure → contrast)
+      if (colorOps.length > 0) {
+        pipeline = await applyColorOperations(pipeline, colorOps, metadata);
+      }
+      
+      // Then apply geometry operations (crop, rotate)
+      for (const op of geometryOps) {
+        // Apply crop first if rect is specified
+        if (op.rectNorm) {
+          const [x, y, w, h] = op.rectNorm;
           
-          // Apply rotation after crop if specified
-          if (op.angleDeg !== undefined && op.angleDeg !== 0) {
-            pipeline = pipeline.rotate(op.angleDeg, {
-              background: { r: 0, g: 0, b: 0, alpha: 0 }
-            });
-          }
+          // Convert normalized coordinates to pixels
+          const cropX = Math.round(x * originalWidth);
+          const cropY = Math.round(y * originalHeight);
+          const cropWidth = Math.round(w * originalWidth);
+          const cropHeight = Math.round(h * originalHeight);
+          
+          // Validate and clamp crop region
+          const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
+          const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
+          const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
+          const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
+          
+          pipeline = pipeline.extract({
+            left: safeX,
+            top: safeY,
+            width: safeWidth,
+            height: safeHeight
+          });
+        }
+        
+        // Apply rotation after crop if specified
+        if (op.angleDeg !== undefined && op.angleDeg !== 0) {
+          pipeline = pipeline.rotate(op.angleDeg, {
+            background: { r: 0, g: 0, b: 0, alpha: 0 }
+          });
         }
       }
       

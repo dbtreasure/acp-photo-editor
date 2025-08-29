@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 4
+# ACP Photo Editor — Phase 5
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, featuring non-destructive edit stack, crop/straighten operations, and full-resolution export with sidecar persistence.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, featuring non-destructive edit stack, crop/straighten operations, core tonal/color adjustments (white balance, exposure, contrast), and full-resolution export with sidecar persistence.
 
 ## Quick Start
 
@@ -22,9 +22,17 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 4
+## What's New in Phase 5
 
-Phase 4 adds export/commit functionality with permission gating:
+Phase 5 adds core tonal and color adjustments:
+- **White Balance**: Gray point sampling or manual temp/tint adjustment
+- **Exposure**: EV-based brightness control (±3 stops)
+- **Contrast**: Global contrast adjustment (±100%)
+- **Proper Order**: Color ops applied before geometry for correct processing
+- **Amend-Last**: Smart replacement of most recent op by type
+- **Live Preview**: Real-time preview with all adjustments applied
+
+Phase 4 features:
 - **Full Resolution Export**: Write edited images to disk at full quality
 - **Permission Gating**: ACP session/request_permission for write operations
 - **Sidecar Persistence**: Edit stack saved as .editstack.json alongside exports
@@ -46,6 +54,12 @@ Previous Phase 2 features:
 - **iTerm2 Support**: Inline image display in compatible terminals
 
 ## Edit Commands
+
+### Color & Tonal Adjustments
+- `:wb --gray 0.42,0.37` - White balance using gray point (normalized coords)
+- `:wb --temp 18 --tint -7` - White balance using temperature/tint (-100 to 100)
+- `:exposure --ev 0.35` - Adjust exposure in EV stops (-3 to +3)
+- `:contrast --amt 12` - Adjust contrast (-100 to 100)
 
 ### Crop & Straighten
 - `:crop --aspect 1:1` - Crop to aspect ratio (square, 16:9, 3:2, etc)
@@ -94,21 +108,37 @@ Opening resources...
 [iTerm2] Displayed inline: test-landscape.jpg
 [completed:img_1]
 
-# Apply a square crop
-> :crop --aspect 1:1
+# Adjust white balance using a gray point
+> :wb --gray 0.42,0.37
 
-Executing :crop...
-[edit_preview] Stack: 1 ops | Last: crop aspect=1:1
-[edit_preview] Received image/png (32KB)
+Executing :wb...
+[edit_preview] Stack: WB(gray 0.42,0.37)
+[edit_preview] Received image/png (45KB)
 [iTerm2] Displayed inline preview
 [completed:edit_preview]
 
-# Straighten the image
-> :crop --angle -2.5
+# Increase exposure
+> :exposure --ev 0.35
+
+Executing :exposure...
+[edit_preview] Stack: WB(gray 0.42,0.37) • EV +0.35
+[edit_preview] Received image/png (46KB)
+[completed:edit_preview]
+
+# Add contrast
+> :contrast --amt 12
+
+Executing :contrast...
+[edit_preview] Stack: WB(gray 0.42,0.37) • EV +0.35 • Contrast +12
+[edit_preview] Received image/png (47KB)
+[completed:edit_preview]
+
+# Apply a square crop
+> :crop --aspect 1:1 --angle -1.0
 
 Executing :crop...
-[edit_preview] Stack: 1 ops | Last: crop angle=-2.5°
-[edit_preview] Received image/png (35KB)
+[edit_preview] Stack: WB(gray 0.42,0.37) • EV +0.35 • Contrast +12 • Crop 1:1 angle -1.0
+[edit_preview] Received image/png (32KB)
 [completed:edit_preview]
 
 # Undo last operation
@@ -171,8 +201,10 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
    - Default max dimension: 1024px
 
 3. **render_preview(uri, editStack, maxPx)** - Apply edits and generate preview
-   - Accepts edit stack with crop/rotate operations
-   - Returns base64-encoded PNG with edits applied (crop then rotate)
+   - Accepts edit stack with all operation types
+   - Operation order: color adjustments → geometry (crop/rotate)
+   - Color ops: white_balance, exposure, contrast
+   - Returns base64-encoded PNG with edits applied
    - Cached for performance
    - Default max dimension: 1024px
 
@@ -186,6 +218,23 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
    - Atomic write with temp file + rename
    - Format options: JPEG/PNG with quality control
    - Returns: dstUri, bytes, dimensions, elapsed time
+
+### Color Adjustment Algorithms
+
+**White Balance**
+- Gray Point: Samples pixel at (x,y), calculates RGB scaling to neutralize
+- Temp/Tint: Maps [-100,100] to color channel multipliers
+- Channel gains clamped to [0.25, 4.0] to prevent extreme corrections
+
+**Exposure**
+- Linear scale by 2^EV (e.g., +1 EV = 2× brightness)
+- Range: ±3 EV stops
+- Applied using Sharp's modulate function
+
+**Contrast**
+- Global contrast around middle gray (0.18 linear)
+- Linear transformation: (input - 0.5) × factor + 0.5
+- Range: ±100% contrast adjustment
 
 ### Supported Formats
 - Standard: JPEG, PNG, WebP, HEIC/HEIF, TIFF, SVG, GIF

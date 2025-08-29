@@ -7,13 +7,46 @@ export interface EditStack {
   ops: EditOp[];
 }
 
-export interface EditOp {
+// Base interface for all edit operations
+export interface BaseEditOp {
   id: string;
+  op: string;
+}
+
+// Crop operation
+export interface CropOp extends BaseEditOp {
   op: 'crop';
   rectNorm?: [number, number, number, number]; // [x, y, w, h] in [0..1] of original image
   angleDeg?: number; // optional rotation in degrees (applied after crop)
   aspect?: string; // optional aspect ratio hint e.g. "1:1", "3:2", "16:9"
 }
+
+// White balance operation
+export interface WhiteBalanceOp extends BaseEditOp {
+  op: 'white_balance';
+  method: 'gray_point' | 'temp_tint';
+  // For gray_point method - coordinates normalized to original image
+  x?: number;
+  y?: number;
+  // For temp_tint method - relative units [-100..100]
+  temp?: number;
+  tint?: number;
+}
+
+// Exposure operation
+export interface ExposureOp extends BaseEditOp {
+  op: 'exposure';
+  ev: number; // EV stops [-3..+3]
+}
+
+// Contrast operation
+export interface ContrastOp extends BaseEditOp {
+  op: 'contrast';
+  amt: number; // percent [-100..100]
+}
+
+// Union type for all operations
+export type EditOp = CropOp | WhiteBalanceOp | ExposureOp | ContrastOp;
 
 // Stack manager with undo/redo support
 export class EditStackManager {
@@ -104,6 +137,115 @@ export class EditStackManager {
     return [x, y, w, h];
   }
 
+  // Add or amend white balance operation
+  addWhiteBalance(options: {
+    method: 'gray_point' | 'temp_tint';
+    x?: number;
+    y?: number;
+    temp?: number;
+    tint?: number;
+    forceNew?: boolean;
+  }): void {
+    // Save current state for undo
+    this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
+    this.redoStack = [];
+
+    const newOp: WhiteBalanceOp = {
+      id: this.generateOpId(),
+      op: 'white_balance',
+      method: options.method
+    };
+
+    if (options.method === 'gray_point') {
+      if (options.x !== undefined && options.y !== undefined) {
+        // Clamp coordinates to [0,1]
+        newOp.x = Math.max(0, Math.min(1, options.x));
+        newOp.y = Math.max(0, Math.min(1, options.y));
+      }
+    } else if (options.method === 'temp_tint') {
+      if (options.temp !== undefined) {
+        // Clamp temp to [-100, 100]
+        newOp.temp = Math.max(-100, Math.min(100, options.temp));
+      }
+      if (options.tint !== undefined) {
+        // Clamp tint to [-100, 100]
+        newOp.tint = Math.max(-100, Math.min(100, options.tint));
+      }
+    }
+
+    // Amend-last logic: replace most recent white_balance op unless forceNew
+    const shouldAmend = !options.forceNew && this.findLastOpByType('white_balance') !== -1;
+    
+    if (shouldAmend) {
+      const idx = this.findLastOpByType('white_balance');
+      this.currentStack.ops[idx] = newOp;
+    } else {
+      this.currentStack.ops.push(newOp);
+    }
+  }
+
+  // Add or amend exposure operation
+  addExposure(options: {
+    ev: number;
+    forceNew?: boolean;
+  }): void {
+    // Save current state for undo
+    this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
+    this.redoStack = [];
+
+    const newOp: ExposureOp = {
+      id: this.generateOpId(),
+      op: 'exposure',
+      ev: Math.max(-3, Math.min(3, options.ev)) // Clamp to [-3, 3]
+    };
+
+    // Amend-last logic: replace most recent exposure op unless forceNew
+    const shouldAmend = !options.forceNew && this.findLastOpByType('exposure') !== -1;
+    
+    if (shouldAmend) {
+      const idx = this.findLastOpByType('exposure');
+      this.currentStack.ops[idx] = newOp;
+    } else {
+      this.currentStack.ops.push(newOp);
+    }
+  }
+
+  // Add or amend contrast operation
+  addContrast(options: {
+    amt: number;
+    forceNew?: boolean;
+  }): void {
+    // Save current state for undo
+    this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
+    this.redoStack = [];
+
+    const newOp: ContrastOp = {
+      id: this.generateOpId(),
+      op: 'contrast',
+      amt: Math.max(-100, Math.min(100, options.amt)) // Clamp to [-100, 100]
+    };
+
+    // Amend-last logic: replace most recent contrast op unless forceNew
+    const shouldAmend = !options.forceNew && this.findLastOpByType('contrast') !== -1;
+    
+    if (shouldAmend) {
+      const idx = this.findLastOpByType('contrast');
+      this.currentStack.ops[idx] = newOp;
+    } else {
+      this.currentStack.ops.push(newOp);
+    }
+  }
+
+  // Helper to find last operation by type
+  private findLastOpByType(opType: string): number {
+    for (let i = this.currentStack.ops.length - 1; i >= 0; i--) {
+      if (this.currentStack.ops[i].op === opType) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   // Add or amend crop operation
   addCrop(options: {
     rectNorm?: [number, number, number, number];
@@ -115,7 +257,7 @@ export class EditStackManager {
     this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
     this.redoStack = []; // Clear redo stack on new operation
 
-    const newOp: EditOp = {
+    const newOp: CropOp = {
       id: this.generateOpId(),
       op: 'crop'
     };
@@ -195,6 +337,47 @@ export class EditStackManager {
     return this.currentStack.ops.length;
   }
 
+  // Get summary of full stack
+  getStackSummary(): string {
+    if (this.currentStack.ops.length === 0) return 'No operations';
+    
+    const summaries: string[] = [];
+    
+    for (const op of this.currentStack.ops) {
+      let summary = '';
+      
+      if (op.op === 'crop') {
+        const cropOp = op as CropOp;
+        summary = 'Crop';
+        if (cropOp.aspect) {
+          summary += ` ${cropOp.aspect}`;
+        }
+        if (cropOp.angleDeg !== undefined && cropOp.angleDeg !== 0) {
+          summary += ` angle ${cropOp.angleDeg.toFixed(1)}`;
+        }
+      } else if (op.op === 'white_balance') {
+        const wbOp = op as WhiteBalanceOp;
+        if (wbOp.method === 'gray_point') {
+          summary = `WB(gray ${wbOp.x?.toFixed(2)},${wbOp.y?.toFixed(2)})`;
+        } else {
+          summary = `WB(temp ${wbOp.temp ?? 0} tint ${wbOp.tint ?? 0})`;
+        }
+      } else if (op.op === 'exposure') {
+        const expOp = op as ExposureOp;
+        summary = `EV ${expOp.ev > 0 ? '+' : ''}${expOp.ev.toFixed(2)}`;
+      } else if (op.op === 'contrast') {
+        const conOp = op as ContrastOp;
+        summary = `Contrast ${conOp.amt > 0 ? '+' : ''}${conOp.amt}`;
+      }
+      
+      if (summary) {
+        summaries.push(summary);
+      }
+    }
+    
+    return summaries.join(' • ');
+  }
+
   // Get summary of last operation
   getLastOpSummary(): string {
     const lastOp = this.currentStack.ops[this.currentStack.ops.length - 1];
@@ -202,17 +385,33 @@ export class EditStackManager {
 
     const parts: string[] = [lastOp.op];
     
-    if (lastOp.rectNorm) {
-      const [x, y, w, h] = lastOp.rectNorm;
-      parts.push(`rect=[${x.toFixed(2)},${y.toFixed(2)},${w.toFixed(2)},${h.toFixed(2)}]`);
-    }
-    
-    if (lastOp.angleDeg !== undefined) {
-      parts.push(`angle=${lastOp.angleDeg.toFixed(1)}°`);
-    }
-    
-    if (lastOp.aspect) {
-      parts.push(`aspect=${lastOp.aspect}`);
+    if (lastOp.op === 'crop') {
+      const cropOp = lastOp as CropOp;
+      if (cropOp.rectNorm) {
+        const [x, y, w, h] = cropOp.rectNorm;
+        parts.push(`rect=[${x.toFixed(2)},${y.toFixed(2)},${w.toFixed(2)},${h.toFixed(2)}]`);
+      }
+      
+      if (cropOp.angleDeg !== undefined) {
+        parts.push(`angle=${cropOp.angleDeg.toFixed(1)}°`);
+      }
+      
+      if (cropOp.aspect) {
+        parts.push(`aspect=${cropOp.aspect}`);
+      }
+    } else if (lastOp.op === 'white_balance') {
+      const wbOp = lastOp as WhiteBalanceOp;
+      if (wbOp.method === 'gray_point') {
+        parts.push(`gray ${wbOp.x?.toFixed(2)},${wbOp.y?.toFixed(2)}`);
+      } else if (wbOp.method === 'temp_tint') {
+        parts.push(`temp ${wbOp.temp} tint ${wbOp.tint}`);
+      }
+    } else if (lastOp.op === 'exposure') {
+      const expOp = lastOp as ExposureOp;
+      parts.push(`EV ${expOp.ev > 0 ? '+' : ''}${expOp.ev.toFixed(2)}`);
+    } else if (lastOp.op === 'contrast') {
+      const conOp = lastOp as ContrastOp;
+      parts.push(`${conOp.amt > 0 ? '+' : ''}${conOp.amt}`);
     }
 
     return parts.join(' ');
@@ -244,11 +443,11 @@ export class EditStackManager {
 
 // Helper to merge partial crop options with defaults
 export function mergeCropOptions(
-  partial: Partial<EditOp>,
+  partial: Partial<CropOp>,
   imageWidth: number,
   imageHeight: number
-): EditOp {
-  const merged: EditOp = {
+): CropOp {
+  const merged: CropOp = {
     id: partial.id || 'op_temp',
     op: 'crop'
   };
