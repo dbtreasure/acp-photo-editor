@@ -159,7 +159,7 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
 
 3. **render_preview(uri, editStack, maxPx)** - Apply edits and generate preview
    - Accepts edit stack with crop/rotate operations
-   - Returns base64-encoded PNG with edits applied
+   - Returns base64-encoded PNG with edits applied (crop then rotate)
    - Cached for performance
    - Default max dimension: 1024px
 

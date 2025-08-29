@@ -374,8 +374,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     
     try {
-      // Render thumbnail with sharp
+      // Render thumbnail with sharp (auto-orient for EXIF)
       const thumbnail = await sharp(filePath)
+        .rotate() // Auto-rotate based on EXIF orientation
         .resize(maxPx, maxPx, {
           fit: 'inside',
           withoutEnlargement: true
@@ -454,22 +455,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     
     try {
-      let pipeline = sharp(filePath);
-      const metadata = await pipeline.metadata();
+      // Start with auto-orient to handle EXIF rotation
+      let pipeline = sharp(filePath).rotate(); // Auto-rotate based on EXIF
+      const metadata = await sharp(filePath).metadata(); // Get original dimensions
       const originalWidth = metadata.width || 1;
       const originalHeight = metadata.height || 1;
       
       // Apply operations in order
       for (const op of editStack.ops) {
         if (op.op === 'crop') {
-          // Apply rotation first if specified
-          if (op.angleDeg !== undefined && op.angleDeg !== 0) {
-            pipeline = pipeline.rotate(op.angleDeg, {
-              background: { r: 0, g: 0, b: 0, alpha: 0 }
-            });
-          }
-          
-          // Apply crop if rect is specified
+          // Apply crop first if rect is specified
           if (op.rectNorm) {
             const [x, y, w, h] = op.rectNorm;
             
@@ -490,6 +485,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               top: safeY,
               width: safeWidth,
               height: safeHeight
+            });
+          }
+          
+          // Apply rotation after crop if specified
+          if (op.angleDeg !== undefined && op.angleDeg !== 0) {
+            pipeline = pipeline.rotate(op.angleDeg, {
+              background: { r: 0, g: 0, b: 0, alpha: 0 }
             });
           }
         }

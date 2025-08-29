@@ -11,7 +11,7 @@ export interface EditOp {
   id: string;
   op: 'crop';
   rectNorm?: [number, number, number, number]; // [x, y, w, h] in [0..1] of original image
-  angleDeg?: number; // optional rotation in degrees around center
+  angleDeg?: number; // optional rotation in degrees (applied after crop)
   aspect?: string; // optional aspect ratio hint e.g. "1:1", "3:2", "16:9"
 }
 
