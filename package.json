@@ -1,0 +1,23 @@
+{
+  "name": "acp-photo-phase0",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist logs .vitest",
+    "start:agent": "node dist/cmd/photo-agent.js",
+    "start:client": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd .",
+    "interactive": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --interactive",
+    "demo": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --demo ping",
+    "test": "vitest run",
+    "pretest": "npm run build"
+  },
+  "devDependencies": {
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^22.7.4",
+    "minimist": "^1.2.8",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

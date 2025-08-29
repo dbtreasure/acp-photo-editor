@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"sess_abc123","prompt":[{"type":"text","text":"ping"}]}}
+{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"sess_abc123"}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}

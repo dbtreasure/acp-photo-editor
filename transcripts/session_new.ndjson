@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/abs/path/workspace","mcpServers":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess_abc123"}}
