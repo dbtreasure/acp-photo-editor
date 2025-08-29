@@ -68,8 +68,8 @@ Previous Phase 2 features:
 - `:wb --temp 18 --tint -7` - White balance using temperature/tint (-100 to 100)
 - `:exposure --ev 0.35` - Adjust exposure in EV stops (-3 to +3)
 - `:contrast --amt 12` - Adjust contrast (-100 to 100)
-- `:saturation --amt 25` - Adjust saturation (-100 to 100)
-- `:vibrance --amt 30` - Adjust vibrance with protection for saturated colors (-100 to 100)
+- `:saturation --amt 30` - Adjust color intensity (-100 to 100)
+- `:vibrance --amt 40` - Smart saturation that protects skin tones (-100 to 100)
 
 ### Auto Adjustments
 - `:auto wb` - Automatic white balance using gray-world algorithm

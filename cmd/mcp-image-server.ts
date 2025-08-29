@@ -157,6 +157,33 @@ function validatePath(filePath: string): void {
 }
 
 async function getMimeType(filePath: string): Promise<string> {
+  try {
+    // Prefer metadata-based detection for safety
+    const metadata = await sharp(filePath).metadata();
+    
+    // Map sharp format to MIME type
+    const formatToMime: Record<string, string> = {
+      'jpeg': 'image/jpeg',
+      'jpg': 'image/jpeg',
+      'png': 'image/png',
+      'webp': 'image/webp',
+      'heif': 'image/heif',
+      'heic': 'image/heic',
+      'tiff': 'image/tiff',
+      'tif': 'image/tiff',
+      'svg': 'image/svg+xml',
+      'gif': 'image/gif'
+    };
+    
+    if (metadata.format && formatToMime[metadata.format]) {
+      return formatToMime[metadata.format];
+    }
+  } catch (err) {
+    // Fall back to extension-based detection if metadata fails
+    console.error('Failed to read metadata for MIME type detection:', err);
+  }
+  
+  // Fallback to extension-based detection
   const ext = path.extname(filePath).toLowerCase();
   const mimeMap: Record<string, string> = {
     '.jpg': 'image/jpeg',
@@ -617,12 +644,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const originalHeight = metadata.height || 1;
       
       // Separate operations by type (color before geometry as per PRD)
-      const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp> = [];
+      const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp> = [];
       const geometryOps: CropOp[] = [];
       
       for (const op of editStack.ops) {
-        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast') {
-          colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp);
+        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast' || 
+            op.op === 'saturation' || op.op === 'vibrance') {
+          colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp);
         } else if (op.op === 'crop') {
           geometryOps.push(op as CropOp);
         }
@@ -835,12 +863,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const originalHeight = metadata.height || 1;
       
       // Separate operations by type (color before geometry as per PRD)
-      const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp> = [];
+      const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp> = [];
       const geometryOps: CropOp[] = [];
       
       for (const op of editStack.ops) {
-        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast') {
-          colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp);
+        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast' || 
+            op.op === 'saturation' || op.op === 'vibrance') {
+          colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp);
         } else if (op.op === 'crop') {
           geometryOps.push(op as CropOp);
         }
