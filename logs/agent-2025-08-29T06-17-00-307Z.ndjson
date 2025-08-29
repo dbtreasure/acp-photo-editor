@@ -1,8 +1,0 @@
-{"t":"2025-08-29T06:17:00.309Z","dir":"recv","data":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false}}}}}
-{"t":"2025-08-29T06:17:00.310Z","dir":"send","data":{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[]}}}
-{"t":"2025-08-29T06:17:00.312Z","dir":"recv","data":{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/Users/dan/Development/acp-photo-editor","mcpServers":[]}}}
-{"t":"2025-08-29T06:17:00.312Z","dir":"send","data":{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_lan3cyv6"}}}
-{"t":"2025-08-29T06:17:18.922Z","dir":"recv","data":{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"sess_lan3cyv6","prompt":[{"type":"text","text":"open assets"},{"type":"resource_link","uri":"file:///file/imgs/pepper.jpg","name":"pepper.jpg","mimeType":"image/jpeg"}]}}}
-{"t":"2025-08-29T06:17:18.922Z","dir":"info","data":{"resource_link":{"type":"resource_link","uri":"file:///file/imgs/pepper.jpg","name":"pepper.jpg","mimeType":"image/jpeg"}}}
-{"t":"2025-08-29T06:17:18.954Z","dir":"send","data":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_lan3cyv6","sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ack: 1 resources (pepper.jpg)"}}}}
-{"t":"2025-08-29T06:17:18.954Z","dir":"send","data":{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}}
