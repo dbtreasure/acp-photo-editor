@@ -8,8 +8,10 @@
     "clean": "rm -rf dist logs .vitest",
     "start:agent": "node dist/cmd/photo-agent.js",
     "start:client": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd .",
+    "start:mcp": "node dist/cmd/mcp-image-server.js",
     "interactive": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --interactive",
     "demo": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --demo ping",
+    "demo:image": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --interactive",
     "test": "vitest run",
     "pretest": "npm run build"
   },
@@ -19,5 +21,10 @@
     "minimist": "^1.2.8",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "sharp": "^0.34.3",
+    "zod": "^4.1.5"
   }
 }

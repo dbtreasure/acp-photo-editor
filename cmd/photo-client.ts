@@ -7,16 +7,19 @@ import { pathToFileURL } from 'url';
 import { JsonRpcPeer } from '../src/common/jsonrpc';
 import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
-import { PromptContent, ContentBlockResourceLink } from '../src/acp/types';
+import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src/acp/types';
 
 const args = minimist(process.argv.slice(2), {
   string: ['agent', 'agentArgs', 'cwd', 'demo'],
-  boolean: ['interactive'],
+  boolean: ['interactive', 'mcp'],
   alias: { i: 'interactive' },
-  default: {}
+  default: { mcp: true }  // Enable MCP by default
 });
 
 const logger = new NdjsonLogger('client');
+
+// Track thumbnails for display
+const thumbnails: Map<string, { metadata?: string; image?: string; mimeType?: string }> = new Map();
 
 async function main() {
   const agentCmd = args.agent || process.env.ACP_AGENT || '';
@@ -32,6 +35,16 @@ async function main() {
   const child = spawn(agentCmd, agentArgs, { stdio: ['pipe', 'pipe', 'inherit'] });
   const peer = new JsonRpcPeer(child.stdout, child.stdin, logger);
 
+  // Configure MCP servers if enabled
+  const mcpServers: MCPServerConfig[] = args.mcp ? [
+    {
+      name: 'image',
+      command: 'node',
+      args: [path.join(__dirname, 'mcp-image-server.js')],
+      env: {}
+    }
+  ] : [];
+
   // Demo mode: run handshake and ping
   if (args.demo === 'ping') {
     try {
@@ -41,7 +54,7 @@ async function main() {
       });
       console.log('DEMO:INIT:OK', JSON.stringify(initRes));
 
-      const newRes = await peer.request('session/new', { cwd, mcpServers: [] });
+      const newRes = await peer.request('session/new', { cwd, mcpServers });
       const sessionId = newRes.sessionId;
       console.log('DEMO:SESSION', sessionId);
 
@@ -79,14 +92,56 @@ async function main() {
       process.exit(1);
     }
 
-    const newRes = await peer.request('session/new', { cwd, mcpServers: [] });
+    const newRes = await peer.request('session/new', { cwd, mcpServers });
     const sessionId = newRes.sessionId;
     console.log(`Session created: ${sessionId}`);
+    if (mcpServers.length > 0) {
+      console.log(`MCP servers configured: ${mcpServers.map(s => s.name).join(', ')}`);
+    }
 
     // Set up session update handler
     peer.on('session/update', (params:any) => {
-      const content = params?.content?.text ?? '';
-      console.log(`[agent] ${content}`);
+      // Handle tool_call_update
+      if (params.sessionUpdate === 'tool_call_update') {
+        const { toolCallId, status, content } = params;
+        
+        if (status === 'in_progress' && content) {
+          for (const item of content) {
+            if (item.type === 'content') {
+              const block = item.content;
+              if (block.type === 'text') {
+                // Store metadata
+                if (!thumbnails.has(toolCallId)) {
+                  thumbnails.set(toolCallId, {});
+                }
+                thumbnails.get(toolCallId)!.metadata = block.text;
+                console.log(`[metadata] ${block.text}`);
+              } else if (block.type === 'image') {
+                // Store image data
+                if (!thumbnails.has(toolCallId)) {
+                  thumbnails.set(toolCallId, {});
+                }
+                const thumb = thumbnails.get(toolCallId)!;
+                thumb.image = block.data;
+                thumb.mimeType = block.mimeType;
+                
+                // Display thumbnail info (in real app, would render the image)
+                const sizeKB = Math.round(block.data.length * 0.75 / 1024); // Estimate from base64
+                console.log(`[thumbnail] Received ${block.mimeType} (${sizeKB}KB)`);
+              }
+            }
+          }
+        } else if (status === 'completed') {
+          console.log(`[completed] ${toolCallId}`);
+        } else if (status === 'failed') {
+          console.log(`[failed] ${toolCallId}`);
+        }
+      } 
+      // Handle regular message chunks
+      else if (params.sessionUpdate === 'agent_message_chunk') {
+        const content = params?.content?.text ?? '';
+        console.log(`[agent] ${content}`);
+      }
     });
 
     // Interactive mode with REPL
@@ -96,6 +151,7 @@ async function main() {
       console.log('  :ping            - Send a ping message to the agent');
       console.log('  :open <path...>  - Open image file(s)');
       console.log('  :cancel          - Cancel the current prompt');
+      console.log('  :gallery         - Show thumbnail gallery');
       console.log('  :exit            - Exit the client');
       console.log('');
 
@@ -116,6 +172,23 @@ async function main() {
           console.log('Goodbye!');
           rl.close();
           process.exit(0);
+        } else if (cmd === ':gallery') {
+          // Display thumbnail gallery
+          if (thumbnails.size === 0) {
+            console.log('No thumbnails loaded. Use :open to load images.');
+          } else {
+            console.log('\nThumbnail Gallery:');
+            console.log('==================');
+            let index = 1;
+            for (const [id, thumb] of thumbnails) {
+              console.log(`${index}. ${thumb.metadata || 'No metadata'}`);
+              if (thumb.image) {
+                console.log(`   Thumbnail: ${thumb.mimeType} (${Math.round(thumb.image.length * 0.75 / 1024)}KB)`);
+              }
+              index++;
+            }
+            console.log('');
+          }
         } else if (cmd === ':ping') {
           if (isPrompting) {
             console.log('A prompt is already in progress. Use :cancel to cancel it.');
@@ -142,6 +215,7 @@ async function main() {
               console.log('Usage: :open <path1> [path2...]');
             } else {
               isPrompting = true;
+              thumbnails.clear(); // Clear previous thumbnails
               console.log('Opening resources...');
               
               // Build prompt with text and resource_links
@@ -187,14 +261,18 @@ async function main() {
                 });
                 console.log(`\n[result] stopReason: ${pRes.stopReason}`);
                 
-                // Update table with ACKED status
+                // Update table with PROCESSED status
                 console.log('\nResources (updated):');
                 console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
                 console.log('----\t\t---\t\t\t\t----\t\t------');
                 resources.forEach(r => {
                   const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
-                  console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tACKED`);
+                  console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tPROCESSED`);
                 });
+                
+                if (thumbnails.size > 0) {
+                  console.log(`\n${thumbnails.size} thumbnail(s) loaded. Use :gallery to view.`);
+                }
               } catch (e: any) {
                 console.error('[error]', e?.message || String(e));
               }

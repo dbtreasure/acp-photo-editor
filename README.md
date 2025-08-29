@@ -1,111 +1,146 @@
-# ACP Photo Editor — Phase 1
+# ACP Photo Editor — Phase 2
 
-An implementation of the Agent Client Protocol (ACP) with support for image resource links.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing.
 
 ## Quick Start
 
 ```bash
+# Requires Node.js >= 18.17.0 (recommended: v20+ or v24+)
+# If using nvm:
+nvm use 24  # or 20, 22
+
 # Install dependencies
 npm install
 
 # Build the project
 npm run build
 
-# Run the demo (ping-pong test)
-npm run demo
-
-# Run interactive mode
+# Run interactive mode with MCP
 npm run interactive
+
+# Run the demo
+npm run demo
 ```
 
-## What This Is
+## What's New in Phase 2
 
-Phase 1 implements the ACP protocol with image resource support:
-1. **Initialize** - Protocol version negotiation
-2. **Session/new** - Create a session with workspace
-3. **Session/prompt** - Send prompts with text and resource_links
-4. **Session/update** - Stream agent responses
-5. **Resource Links** - Pass image file references to the agent
+Phase 2 adds MCP server integration for real image processing:
+- **MCP Image Server**: Standalone server for image operations
+- **Real Thumbnails**: Generate actual image thumbnails (1024px max)
+- **Metadata Extraction**: Get dimensions, file size, MIME type
+- **Tool Call Streaming**: Progressive updates with tool_call_update
+- **Gallery View**: Display loaded thumbnails in client
+
+## Architecture
+
+```
+┌──────────┐         ACP          ┌─────────┐         MCP          ┌────────────┐
+│  Client  │◄──────JSON-RPC──────►│  Agent  │◄──────JSON-RPC──────►│ MCP Server │
+│   (CLI)  │        (stdio)        │         │        (stdio)        │   (Image)  │
+└──────────┘                       └─────────┘                       └────────────┘
+```
 
 ## Demo Script
 
-### Basic Demo (Golden Path)
-```bash
-# Terminal 1 - Start the agent
-npm run start:agent
+### Interactive Mode with Images
 
-# Terminal 2 - Run the client
-npm run start:client
-
-# Or run the automated demo
-npm run demo
-```
-
-Expected output:
-```
-DEMO:INIT:OK {"protocolVersion":1,"agentCapabilities":...}
-DEMO:SESSION sess_abc123
-DEMO:CHUNK pong
-DEMO:STOP end_turn
-```
-
-### Interactive Mode
 ```bash
 npm run interactive
 
-# Available commands:
-# :ping            - Send a ping message to the agent
-# :open <path...>  - Open image file(s)
-# :cancel          - Cancel the current prompt
-# :exit            - Exit the client
-```
+> :open test/assets/test.jpg
 
-### Opening Images (Phase 1)
-```bash
-npm run interactive
+Opening resources...
 
-> :open /path/to/image.jpg /path/to/photo.png
-
-# The client will:
-# 1. Convert paths to file:// URIs
-# 2. Guess MIME types (image/jpeg, image/png, image/x-raw, etc.)
-# 3. Send resource_links in the prompt
-# 4. Display a table of resources and their status
-
-# Example output:
 Resources:
-Name          URI                         MIME          Status
-----          ---                         ----          ------
-image.jpg     .../path/to/image.jpg      image/jpeg    SENDING
-photo.png     .../path/to/photo.png      image/png     SENDING
+Name        URI                             MIME          Status
+----        ---                             ----          ------
+test.jpg    ...assets/test.jpg              image/jpeg    SENDING
 
-[agent] ack: 2 resources (image.jpg, ...)
+[metadata] test.jpg 1024×768, 1.2MB, image/jpeg
+[thumbnail] Received image/png (45KB)
+[completed] img_1
 
 [result] stopReason: end_turn
+
+1 thumbnail(s) loaded. Use :gallery to view.
+
+> :gallery
+
+Thumbnail Gallery:
+==================
+1. test.jpg 1024×768, 1.2MB, image/jpeg
+   Thumbnail: image/png (45KB)
 ```
+
+### Commands
+
+- `:ping` - Test basic connectivity
+- `:open <path...>` - Open and process image files via MCP
+- `:gallery` - Display loaded thumbnail information
+- `:cancel` - Cancel current operation
+- `:exit` - Exit the client
+
+## MCP Server Features
+
+The MCP image server (`cmd/mcp-image-server.ts`) provides:
+
+### Resources
+- `file://` URI scheme support
+- Bounded to current working directory
+- Path traversal protection
+
+### Tools
+
+1. **read_image_meta(uri)** - Extract image metadata
+   ```json
+   {
+     "mime": "image/jpeg",
+     "width": 1024,
+     "height": 768,
+     "sizeBytes": 1234567,
+     "exif": { ... }
+   }
+   ```
+
+2. **render_thumbnail(uri, maxPx)** - Generate thumbnail
+   - Returns base64-encoded PNG
+   - Preserves aspect ratio
+   - Default max dimension: 1024px
+
+### Supported Formats
+- Standard: JPEG, PNG, WebP, HEIC/HEIF, TIFF, SVG, GIF
+- File size limit: 50MB (configurable)
+- EXIF stripping for privacy
+
+## Protocol Flow
+
+1. **Client → Agent**: session/new with mcpServers config
+2. **Agent → MCP**: Spawn and connect to image server
+3. **Client → Agent**: prompt with resource_links
+4. **Agent → MCP**: Call read_image_meta and render_thumbnail
+5. **Agent → Client**: Stream tool_call_update events
+6. **Agent → Client**: Complete with stopReason: end_turn
 
 ## Project Structure
 
 ```
-/cmd/           # CLI entry points
-  photo-client.ts   # ACP Client with :open command
-  photo-agent.ts    # ACP Agent with resource acknowledgment
+/cmd/
+  photo-client.ts      # ACP client with thumbnail display
+  photo-agent.ts       # ACP agent with MCP client integration
+  mcp-image-server.ts  # MCP server for image processing
+
 /src/
-  /acp/         # ACP protocol types (includes ContentBlockResourceLink)
-  /common/      # JSON-RPC, logging, and MIME type utilities
-/test/          # Integration tests
-/logs/          # Runtime NDJSON logs
-/transcripts/   # Example protocol messages
+  /acp/               # ACP protocol types (extended for Phase 2)
+    - ContentBlockImage
+    - ToolCallUpdate
+    - MCPServerConfig
+  /common/            # Shared utilities
+
+/test/
+  /assets/            # Test images
+  integration.test.ts # Phase 1 tests
+  mcp-integration.test.ts # Phase 2 MCP tests
 ```
-
-## Protocol Messages
-
-Example transcripts are provided in `/transcripts/`:
-- `initialize.ndjson` - Protocol version negotiation
-- `session_new.ndjson` - Session creation
-- `prompt_ping.ndjson` - Ping-pong exchange
-- `cancel.ndjson` - Cancellation flow
-- `phase1_open_resource_link.ndjson` - Resource link handling
 
 ## Testing
 
@@ -113,66 +148,82 @@ Example transcripts are provided in `/transcripts/`:
 # Run all tests
 npm test
 
-# The demo itself is an integration test
-npm run demo
+# Run specific test suites
+npm test -- integration.test      # Phase 1 tests
+npm test -- mcp-integration.test  # Phase 2 MCP tests
+
+# Test without MCP (fallback to Phase 1)
+npm run interactive -- --no-mcp
 ```
 
-## Logging
+## Performance Targets
 
-All JSON-RPC messages are logged to `logs/` directory as NDJSON files:
-- `client-<timestamp>.ndjson` - Client-side messages
-- `agent-<timestamp>.ndjson` - Agent-side messages
+- First metadata chunk: < 150ms
+- First thumbnail chunk: < 400ms (12MP JPEG @ 1024px)
+- Cancel response: < 100ms
+- Memory per thumbnail: ≤ 1.5MB
+
+## Troubleshooting
+
+### Sharp Module Errors
+If you see "Could not load the sharp module":
+```bash
+# Check Node version (needs >= 18.17.0)
+node --version
+
+# If using nvm, switch to newer version
+nvm use 24  # or 20, 22
+
+# Rebuild sharp
+npm rebuild sharp
+```
+
+### MCP Connection Issues
+- Check logs in `logs/` directory
+- Test MCP server directly: `npm run start:mcp`
+- Verify test image exists: `ls test/assets/`
 
 ## Development
 
-### Commands
+### Scripts
 - `npm run build` - Compile TypeScript
-- `npm run clean` - Clean build artifacts and logs
-- `npm test` - Run tests
-- `npm run demo` - Run ping-pong demo
-- `npm run interactive` - Interactive REPL mode
+- `npm run clean` - Clean build artifacts
+- `npm run start:agent` - Run agent standalone
+- `npm run start:mcp` - Run MCP server standalone
+- `npm run interactive` - Interactive client with MCP
+- `npm run demo` - Basic ping demo
+- `npm run demo:image` - Image processing demo
 
 ### Requirements
-- Node.js 18+ 
+- Node.js >= 18.17.0 (v20+ or v24+ recommended)
 - TypeScript 5+
 - macOS or Linux
 
-## CI/CD
-
-GitHub Actions workflow runs on push/PR:
-- Lint (TypeScript check)
-- Build
-- Unit tests
-- Integration test (demo)
-
-Tested on macOS and Linux with Node 18.x and 20.x.
-
-## Phase 1 Features
+## Phase 2 Features
 
 ✅ Implemented:
-- JSON-RPC 2.0 over stdio
-- Initialize handshake
-- Session management
-- Text prompts and resource_links
-- :open command for image files
-- MIME type detection for images (JPEG, PNG, RAW formats)
-- Resource acknowledgment by agent
-- Streaming updates
-- NDJSON logging
-- Interactive CLI with :ping, :open, and :cancel
+- MCP server with Resources and Tools
+- Real image metadata extraction
+- Thumbnail generation with Sharp
+- Tool call streaming (tool_call_update)
+- Progressive content updates
+- Gallery view in client
+- Graceful fallback to Phase 1
 
-🎯 Supported Image Formats:
-- Standard: JPEG, PNG, GIF, WebP, BMP, SVG
-- RAW: RAF (Fuji), NEF (Nikon), ARW (Sony), CR2/CR3 (Canon), DNG (Adobe), ORF (Olympus), RW2 (Panasonic)
+🔒 Security:
+- CWD-bounded file access
+- Path traversal protection
+- 50MB file size limit
+- EXIF stripping from thumbnails
+- MIME type validation
 
-❌ Not Yet Implemented:
-- Actual image pixel data processing
-- Tool calls
-- File system access beyond URIs
-- MCP servers
-- Audio support
-- Plans
-- Permissions
+## Next Phase Preview
+
+Phase 3 will add:
+- Non-destructive edit operations (crop, rotate)
+- Edit history/undo stack
+- Permission-gated file writes
+- Export with format conversion
 
 ## License
 

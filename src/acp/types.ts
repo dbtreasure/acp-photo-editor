@@ -9,10 +9,26 @@ export type InitializeResult = {
   authMethods: any[];
 };
 
-export type SessionNewParams = { cwd: string; mcpServers: any[] };
+export type MCPServerConfig = {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+export type SessionNewParams = { 
+  cwd: string; 
+  mcpServers: MCPServerConfig[];
+};
 export type SessionNewResult = { sessionId: string };
 
 export type ContentBlockText = { type: 'text'; text: string };
+
+export type ContentBlockImage = {
+  type: 'image';
+  data: string;      // base64 encoded image
+  mimeType: string;  // e.g., 'image/png'
+};
 
 export type ContentBlockResourceLink = {
   type: 'resource_link';
@@ -21,6 +37,7 @@ export type ContentBlockResourceLink = {
   mimeType?: string;      // best-effort guess, optional
 };
 
+export type ContentBlock = ContentBlockText | ContentBlockImage;
 export type PromptContent = ContentBlockText | ContentBlockResourceLink;
 
 export type SessionPromptParams = {
@@ -32,8 +49,25 @@ export type SessionPromptResult = {
   stopReason: 'end_turn' | 'cancelled' | string;
 };
 
+export type ToolCallContent = {
+  type: 'content';
+  content: ContentBlock;
+};
+
+export type ToolCallUpdate = {
+  sessionUpdate: 'tool_call_update';
+  toolCallId: string;
+  status: 'in_progress' | 'completed' | 'failed';
+  rawInput?: any;
+  content?: ToolCallContent[];
+};
+
 export type SessionUpdateParams = {
   sessionId: string;
-  sessionUpdate: 'agent_message_chunk';
-  content: ContentBlockText;
-};
+} & (
+  | {
+      sessionUpdate: 'agent_message_chunk';
+      content: ContentBlock;
+    }
+  | ToolCallUpdate
+);
