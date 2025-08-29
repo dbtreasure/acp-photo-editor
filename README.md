@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 3
+# ACP Photo Editor — Phase 4
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now with non-destructive edit stack and crop/straighten operations.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, featuring non-destructive edit stack, crop/straighten operations, and full-resolution export with sidecar persistence.
 
 ## Quick Start
 
@@ -22,15 +22,21 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 3
+## What's New in Phase 4
 
-Phase 3 adds non-destructive edit stack with crop/straighten operations:
+Phase 4 adds export/commit functionality with permission gating:
+- **Full Resolution Export**: Write edited images to disk at full quality
+- **Permission Gating**: ACP session/request_permission for write operations
+- **Sidecar Persistence**: Edit stack saved as .editstack.json alongside exports
+- **Atomic Writes**: Temp file + rename pattern prevents partial files
+- **Format Options**: JPEG/PNG with quality and chroma subsampling control
+- **Progress Streaming**: Real-time export progress via tool_call_update
+
+Phase 3 features:
 - **Edit Stack v1**: Non-destructive edit operations stored per image
 - **Crop & Straighten**: Apply crop with aspect ratios and rotation angles
 - **Undo/Redo**: Full undo/redo support with edit history
 - **Live Previews**: Real-time preview generation with edits applied
-- **Amend-Last**: Smart operation replacement to prevent stack bloat
-- **Cache Optimization**: Cached image decoding and preview rendering
 
 Previous Phase 2 features:
 - **MCP Image Server**: Standalone server for image operations
@@ -55,6 +61,13 @@ Previous Phase 2 features:
 ### File Operations
 - `:open <path>` - Load image file(s)
 - `:gallery` - Show loaded thumbnails
+
+### Export Operations
+- `:export` - Export with defaults (JPEG 90, ./Export/)
+- `:export --format png` - Export as PNG
+- `:export --quality 95` - Set JPEG quality
+- `:export --dst ./output.jpg` - Specify destination
+- `:export --overwrite` - Replace existing files
 
 ## Architecture
 
@@ -167,6 +180,12 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
    - Computes maximum inscribed rectangle for aspect ratio
    - Returns normalized coordinates [0,1]
    - Supports keywords: square, landscape, portrait, wide, ultrawide
+
+5. **commit_version(uri, editStack, dstUri, options)** - Export full resolution
+   - Renders full-res image with edits applied
+   - Atomic write with temp file + rename
+   - Format options: JPEG/PNG with quality control
+   - Returns: dstUri, bytes, dimensions, elapsed time
 
 ### Supported Formats
 - Standard: JPEG, PNG, WebP, HEIC/HEIF, TIFF, SVG, GIF

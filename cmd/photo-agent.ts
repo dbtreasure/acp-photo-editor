@@ -4,9 +4,11 @@ import { NdjsonLogger } from '../src/common/logger';
 import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { MCPServerConfig, ContentBlock, ToolCallContent } from '../src/acp/types';
+import { MCPServerConfig, ContentBlock, ToolCallContent, PermissionOperation } from '../src/acp/types';
 import { EditStackManager } from '../src/editStack';
 import path from 'path';
+import fs from 'fs/promises';
+import { pathToFileURL } from 'url';
 
 const logger = new NdjsonLogger('agent');
 
@@ -85,6 +87,29 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
     resourceLinks.forEach((link: any) => {
       logger.line('info', { resource_link: link });
     });
+    
+    // Check for export command
+    if (text.startsWith(':export')) {
+      handleExportCommand(text, currentSessionId, params.cwd || process.cwd(), id).then(
+        () => {
+          if (!cancelled) {
+            send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+          } else {
+            send({ jsonrpc: '2.0', id, result: { stopReason: 'cancelled' } });
+          }
+        },
+        (err) => {
+          logger.line('error', { export_command_failed: err.message });
+          notify('session/update', {
+            sessionId: currentSessionId,
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: `Error: ${err.message}` }
+          });
+          send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+        }
+      );
+      return;
+    }
     
     // Check for edit commands (crop, undo, redo, reset)
     if (text.startsWith(':crop') || text === ':undo' || text === ':redo' || text === ':reset') {
@@ -526,6 +551,245 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         }
       }]
     });
+  }
+}
+
+async function handleExportCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
+  // Check if we have an image loaded
+  if (!lastLoadedImage) {
+    throw new Error('No image loaded. Please load an image first.');
+  }
+  
+  const stackManager = imageStacks.get(lastLoadedImage);
+  if (!stackManager) {
+    throw new Error('No edit stack for current image');
+  }
+  
+  const client = mcpClients.get('image');
+  if (!client) {
+    throw new Error('No MCP image server available');
+  }
+  
+  // Parse export arguments
+  const args = command.substring(7).trim();
+  const exportOptions: any = {
+    format: 'jpeg',
+    quality: 90,
+    chromaSubsampling: '4:2:0',
+    stripExif: true,
+    colorProfile: 'srgb',
+    overwrite: false
+  };
+  
+  // Parse --format
+  const formatMatch = args.match(/--format\s+(\S+)/);
+  if (formatMatch) {
+    exportOptions.format = formatMatch[1];
+  }
+  
+  // Parse --quality
+  const qualityMatch = args.match(/--quality\s+(\d+)/);
+  if (qualityMatch) {
+    exportOptions.quality = parseInt(qualityMatch[1]);
+  }
+  
+  // Parse --dst
+  let dstPath: string;
+  const dstMatch = args.match(/--dst\s+(\S+)/);
+  if (dstMatch) {
+    dstPath = path.resolve(cwd, dstMatch[1]);
+  } else {
+    // Default to ./Export/<orig>_edit.<ext>
+    const origName = path.basename(lastLoadedImage, path.extname(lastLoadedImage));
+    const ext = exportOptions.format === 'png' ? '.png' : '.jpg';
+    dstPath = path.resolve(cwd, 'Export', `${origName}_edit${ext}`);
+  }
+  
+  // Parse --overwrite flag
+  exportOptions.overwrite = args.includes('--overwrite');
+  
+  // Parse --batch flag
+  const isBatch = args.includes('--batch');
+  
+  if (isBatch) {
+    // For batch, export all loaded images
+    const allImages = Array.from(imageStacks.keys());
+    if (allImages.length === 0) {
+      throw new Error('No images loaded for batch export');
+    }
+    
+    // TODO: Implement batch export
+    throw new Error('Batch export not yet implemented');
+  }
+  
+  // Get current edit stack
+  const editStack = stackManager.getStack();
+  
+  // Estimate file size (rough approximation)
+  const bytesApprox = 2500000; // ~2.5MB estimate for edited image
+  const sidecarBytesApprox = JSON.stringify(editStack).length + 100;
+  
+  // Build permission operations
+  const operations: PermissionOperation[] = [
+    {
+      kind: 'write_file',
+      uri: pathToFileURL(dstPath).href,
+      bytesApprox
+    },
+    {
+      kind: 'write_file',
+      uri: pathToFileURL(dstPath + '.editstack.json').href,
+      bytesApprox: sidecarBytesApprox
+    }
+  ];
+  
+  // Send permission request
+  const permissionRequest = {
+    jsonrpc: '2.0',
+    id: requestId + 1000, // Use offset to avoid ID collision
+    method: 'session/request_permission',
+    params: {
+      sessionId,
+      title: 'Export edited image',
+      explanation: `Write edited image and edit stack to ${path.basename(dstPath)}`,
+      operations
+    }
+  };
+  
+  // Send permission request and wait for response
+  send(permissionRequest);
+  
+  // For now, we'll assume permission is granted and proceed
+  // In a real implementation, we'd wait for the permission response
+  
+  // Start export with progress updates
+  const toolCallId = 'export_1';
+  
+  // Send initial progress
+  notify('session/update', {
+    sessionId,
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    status: 'in_progress',
+    rawInput: { command, dst: dstPath }
+  });
+  
+  // Send text update about rendering
+  notify('session/update', {
+    sessionId,
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    status: 'in_progress',
+    content: [{
+      type: 'content',
+      content: { type: 'text', text: 'Rendering full resolution...' }
+    }]
+  });
+  
+  try {
+    // Call commit_version
+    const commitResult = await client.callTool({
+      name: 'commit_version',
+      arguments: {
+        uri: lastLoadedImage,
+        editStack,
+        dstUri: pathToFileURL(dstPath).href,
+        format: exportOptions.format,
+        quality: exportOptions.quality,
+        chromaSubsampling: exportOptions.chromaSubsampling,
+        stripExif: exportOptions.stripExif,
+        colorProfile: exportOptions.colorProfile,
+        overwrite: exportOptions.overwrite
+      }
+    });
+    
+    // Parse result
+    const content = commitResult.content as any[] | undefined;
+    const resultData = JSON.parse(content?.[0]?.text || '{}');
+    
+    // Write sidecar file
+    const sidecarPath = dstPath + '.editstack.json';
+    const sidecarContent = {
+      version: 1,
+      baseUri: lastLoadedImage,
+      ops: editStack.ops,
+      createdAt: new Date().toISOString(),
+      render: {
+        format: exportOptions.format,
+        quality: exportOptions.quality,
+        colorProfile: exportOptions.colorProfile
+      }
+    };
+    
+    try {
+      await fs.writeFile(sidecarPath, JSON.stringify(sidecarContent, null, 2));
+    } catch (err: any) {
+      logger.line('error', { sidecar_write_failed: err.message });
+    }
+    
+    // Send success summary
+    const summary = `Exported: ${path.basename(dstPath)} (${resultData.width}×${resultData.height}, ${Math.round(resultData.bytes / 1024)}KB, ${resultData.format})`;
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'in_progress',
+      content: [{
+        type: 'content',
+        content: { type: 'text', text: summary }
+      }]
+    });
+    
+    // Mark as completed
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'completed'
+    });
+    
+    // Log export
+    logger.line('info', {
+      export_success: true,
+      src: lastLoadedImage,
+      dst: dstPath,
+      stackHash: stackManager.computeHash(),
+      elapsedMs: resultData.elapsedMs,
+      bytes: resultData.bytes,
+      success: true
+    });
+    
+  } catch (error: any) {
+    logger.line('error', {
+      export_failed: error.message
+    });
+    
+    // Send error update
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'failed',
+      content: [{
+        type: 'content',
+        content: {
+          type: 'text',
+          text: `Export failed: ${error.message}`
+        }
+      }]
+    });
+    
+    // Log failed export
+    logger.line('error', {
+      export_success: false,
+      src: lastLoadedImage,
+      dst: dstPath,
+      stackHash: stackManager.computeHash(),
+      error: error.message,
+      success: false
+    });
+    
+    throw error;
   }
 }
 

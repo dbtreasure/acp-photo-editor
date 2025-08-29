@@ -201,6 +201,11 @@ async function main() {
       console.log('  :undo            - Undo last edit operation');
       console.log('  :redo            - Redo previously undone operation');
       console.log('  :reset           - Reset to original image');
+      console.log('  :export [opts]   - Export edited image to disk');
+      console.log('    --format jpeg|png    - Output format (default: jpeg)');
+      console.log('    --quality 1-100      - JPEG quality (default: 90)');
+      console.log('    --dst <path>         - Destination path (default: ./Export/)');
+      console.log('    --overwrite          - Overwrite existing files');
       console.log('  :cancel          - Cancel the current prompt');
       console.log('  :gallery         - Show thumbnail gallery');
       console.log('  :exit            - Exit the client');
@@ -289,6 +294,29 @@ async function main() {
               const pRes = await peer.request('session/prompt', {
                 sessionId,
                 prompt: [{ type: 'text', text: cmd }]
+              });
+              console.log(`[result] stopReason: ${pRes.stopReason}`);
+            } catch (e: any) {
+              console.error('[error]', e?.message || String(e));
+            }
+            isPrompting = false;
+          }
+        } else if (cmd.startsWith(':export')) {
+          // Handle export command
+          if (isPrompting) {
+            console.log('A prompt is already in progress. Use :cancel to cancel it.');
+          } else {
+            isPrompting = true;
+            console.log('Preparing export...');
+            
+            // Note: Permission handling would be implemented here
+            // For now, we'll let the agent proceed assuming permission is granted
+            
+            try {
+              const pRes = await peer.request('session/prompt', {
+                sessionId,
+                prompt: [{ type: 'text', text: cmd }],
+                cwd // Pass CWD for resolving paths
               });
               console.log(`[result] stopReason: ${pRes.stopReason}`);
             } catch (e: any) {

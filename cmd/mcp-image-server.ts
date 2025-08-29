@@ -16,6 +16,8 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
 import { EditStack, EditOp } from '../src/editStack.js';
+import { randomBytes } from 'crypto';
+import { rename } from 'fs/promises';
 
 // Use MCP_ROOT from environment for proper session sandboxing
 const root = process.env.MCP_ROOT || process.cwd();
@@ -49,6 +51,28 @@ const ComputeAspectRectArgsSchema = z.object({
   width: z.number().positive(),
   height: z.number().positive(),
   aspect: z.string()
+});
+
+const CommitVersionArgsSchema = z.object({
+  uri: z.url(),
+  editStack: z.object({
+    version: z.literal(1),
+    baseUri: z.string(),
+    ops: z.array(z.object({
+      id: z.string(),
+      op: z.literal('crop'),
+      rectNorm: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+      angleDeg: z.number().optional(),
+      aspect: z.string().optional()
+    }))
+  }),
+  dstUri: z.url(),
+  format: z.enum(['jpeg', 'png']).optional().default('jpeg'),
+  quality: z.number().min(1).max(100).optional().default(90),
+  chromaSubsampling: z.enum(['4:4:4', '4:2:0']).optional().default('4:2:0'),
+  stripExif: z.boolean().optional().default(true),
+  colorProfile: z.enum(['srgb', 'displayp3']).optional().default('srgb'),
+  overwrite: z.boolean().optional().default(false)
 });
 
 const SUPPORTED_MIMES = new Set([
@@ -278,6 +302,63 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ['width', 'height', 'aspect']
+        }
+      },
+      {
+        name: 'commit_version',
+        description: 'Render and write edited image to disk at full resolution',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            uri: {
+              type: 'string',
+              description: 'Source file:// URI'
+            },
+            editStack: {
+              type: 'object',
+              description: 'Edit stack to apply',
+              properties: {
+                version: { type: 'number' },
+                baseUri: { type: 'string' },
+                ops: { type: 'array' }
+              },
+              required: ['version', 'baseUri', 'ops']
+            },
+            dstUri: {
+              type: 'string',
+              description: 'Destination file:// URI'
+            },
+            format: {
+              type: 'string',
+              enum: ['jpeg', 'png'],
+              default: 'jpeg'
+            },
+            quality: {
+              type: 'number',
+              minimum: 1,
+              maximum: 100,
+              default: 90
+            },
+            chromaSubsampling: {
+              type: 'string',
+              enum: ['4:4:4', '4:2:0'],
+              default: '4:2:0'
+            },
+            stripExif: {
+              type: 'boolean',
+              default: true
+            },
+            colorProfile: {
+              type: 'string',
+              enum: ['srgb', 'displayp3'],
+              default: 'srgb'
+            },
+            overwrite: {
+              type: 'boolean',
+              default: false
+            }
+          },
+          required: ['uri', 'editStack', 'dstUri']
         }
       }
     ]
@@ -592,6 +673,182 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       ]
     };
+  }
+  
+  if (name === 'commit_version') {
+    const { uri, editStack, dstUri, format, quality, chromaSubsampling, stripExif, colorProfile, overwrite } = 
+      CommitVersionArgsSchema.parse(args);
+    
+    const startTime = Date.now();
+    
+    // Validate source URI
+    if (!uri.startsWith('file://')) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Only file:// URIs are supported for source'
+      );
+    }
+    
+    // Validate destination URI
+    if (!dstUri.startsWith('file://')) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Only file:// URIs are supported for destination'
+      );
+    }
+    
+    const srcPath = fileURLToPath(uri);
+    const dstPath = fileURLToPath(dstUri);
+    
+    // Validate paths are within MCP_ROOT
+    validatePath(srcPath);
+    validatePath(dstPath);
+    
+    // Check source file
+    const srcStats = await fs.stat(srcPath);
+    if (srcStats.size > MAX_FILE_SIZE) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Source file too large: ${srcStats.size} bytes (max ${MAX_FILE_SIZE})`
+      );
+    }
+    
+    // Check if destination exists
+    try {
+      await fs.stat(dstPath);
+      if (!overwrite) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `Destination file already exists: ${dstPath}. Use overwrite: true to replace.`
+        );
+      }
+    } catch (e: any) {
+      // File doesn't exist, which is fine
+      if (e.code !== 'ENOENT') throw e;
+    }
+    
+    // Ensure destination directory exists
+    const dstDir = path.dirname(dstPath);
+    await fs.mkdir(dstDir, { recursive: true });
+    
+    try {
+      // Start with auto-orient to handle EXIF rotation
+      let pipeline = sharp(srcPath).rotate(); // Auto-rotate based on EXIF
+      const metadata = await sharp(srcPath).metadata(); // Get original dimensions
+      const originalWidth = metadata.width || 1;
+      const originalHeight = metadata.height || 1;
+      
+      // Apply operations (crop then rotate as per Phase 3 fix)
+      for (const op of editStack.ops) {
+        if (op.op === 'crop') {
+          // Apply crop first if rect is specified
+          if (op.rectNorm) {
+            const [x, y, w, h] = op.rectNorm;
+            
+            // Convert normalized coordinates to pixels
+            const cropX = Math.round(x * originalWidth);
+            const cropY = Math.round(y * originalHeight);
+            const cropWidth = Math.round(w * originalWidth);
+            const cropHeight = Math.round(h * originalHeight);
+            
+            // Validate and clamp crop region
+            const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
+            const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
+            const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
+            const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
+            
+            pipeline = pipeline.extract({
+              left: safeX,
+              top: safeY,
+              width: safeWidth,
+              height: safeHeight
+            });
+          }
+          
+          // Apply rotation after crop if specified
+          if (op.angleDeg !== undefined && op.angleDeg !== 0) {
+            pipeline = pipeline.rotate(op.angleDeg, {
+              background: { r: 0, g: 0, b: 0, alpha: 0 }
+            });
+          }
+        }
+      }
+      
+      // Configure output format
+      if (format === 'jpeg') {
+        pipeline = pipeline.jpeg({
+          quality,
+          chromaSubsampling: chromaSubsampling as '4:4:4' | '4:2:0',
+          force: true
+        });
+      } else if (format === 'png') {
+        pipeline = pipeline.png({
+          compressionLevel: 9,
+          force: true
+        });
+      }
+      
+      // Remove EXIF if requested
+      if (stripExif) {
+        pipeline = pipeline.withMetadata({
+          orientation: undefined,
+          exif: {},
+          icc: colorProfile === 'srgb' ? 'sRGB' : undefined
+        });
+      } else {
+        pipeline = pipeline.withMetadata({
+          orientation: 1, // Reset orientation since we've already applied it
+          icc: colorProfile === 'srgb' ? 'sRGB' : undefined
+        });
+      }
+      
+      // Generate temp filename for atomic write
+      const tempPath = `${dstPath}.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
+      
+      // Write to temp file
+      await pipeline.toFile(tempPath);
+      
+      // Get final file stats
+      const finalStats = await fs.stat(tempPath);
+      const finalMetadata = await sharp(tempPath).metadata();
+      
+      // Atomic rename
+      await rename(tempPath, dstPath);
+      
+      const elapsedMs = Date.now() - startTime;
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              dstUri,
+              bytes: finalStats.size,
+              format,
+              width: finalMetadata.width || 0,
+              height: finalMetadata.height || 0,
+              elapsedMs
+            })
+          }
+        ]
+      };
+    } catch (error: any) {
+      // Clean up temp file on error
+      const tempPattern = `${dstPath}.tmp.${process.pid}`;
+      try {
+        const files = await fs.readdir(path.dirname(dstPath));
+        for (const file of files) {
+          if (file.startsWith(path.basename(tempPattern))) {
+            await fs.unlink(path.join(path.dirname(dstPath), file)).catch(() => {});
+          }
+        }
+      } catch {}
+      
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to commit version: ${error.message}`
+      );
+    }
   }
   
   throw new McpError(

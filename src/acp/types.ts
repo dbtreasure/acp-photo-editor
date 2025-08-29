@@ -49,6 +49,23 @@ export type SessionPromptResult = {
   stopReason: 'end_turn' | 'cancelled' | string;
 };
 
+// Permission request types for Phase 4
+export type PermissionOperation = {
+  kind: 'write_file';
+  uri: string;
+  bytesApprox?: number;
+};
+
+export type PermissionRequest = {
+  title: string;
+  explanation: string;
+  operations: PermissionOperation[];
+};
+
+export type PermissionResponse = {
+  approved: boolean;
+};
+
 export type ToolCallContent = {
   type: 'content';
   content: ContentBlock;
