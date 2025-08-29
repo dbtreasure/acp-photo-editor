@@ -24,7 +24,7 @@ function b64(s: string): string {
  * Check if running in iTerm2
  */
 export function isITerm2(): boolean {
-  return process.env.TERM_PROGRAM === 'iTerm.app';
+  return process.env.TERM_PROGRAM === 'iTerm.app' || !!process.env.ITERM_SESSION_ID;
 }
 
 /**
@@ -43,7 +43,7 @@ export function isTmux(): boolean {
  */
 export function itermShowImage(b64Image: string, opts?: ItermImageOptions): void {
   const name = b64(opts?.name || 'image.png');
-  const width = opts?.width || '64ch';
+  const width = opts?.width || '64';  // Default to 64 cells (not '64ch')
   const height = opts?.height || 'auto';
   const preserveAspectRatio = opts?.preserveAspectRatio !== false ? 1 : 0;
   
@@ -57,19 +57,28 @@ export function itermShowImage(b64Image: string, opts?: ItermImageOptions): void
     return;
   }
   
-  // Multipart mode (tmux-safe)
-  // iTerm2 3.5+ supports multipart to work around tmux buffer limits
-  process.stdout.write(`${ESC}]1337;MultipartFile=${args}${BEL}`);
+  // Tmux mode: try multipart first, fallback to DCS passthrough
+  const useMultipart = !!process.env.ITERM_SESSION_ID && process.env.TMUX_MULTIPART !== 'off';
   
-  // Chunk size: 1MB per iTerm2/tmux guidance
-  const CHUNK_SIZE = 1024 * 1024;
-  
-  for (let i = 0; i < b64Image.length; i += CHUNK_SIZE) {
-    const chunk = b64Image.slice(i, Math.min(i + CHUNK_SIZE, b64Image.length));
-    process.stdout.write(`${ESC}]1337;FilePart=${chunk}${BEL}`);
+  if (useMultipart) {
+    // Multipart mode (tmux-safe) - iTerm2 3.5+
+    process.stdout.write(`${ESC}]1337;MultipartFile=${args}${BEL}`);
+    
+    // Chunk size: 1MB per iTerm2/tmux guidance
+    const CHUNK_SIZE = 1024 * 1024;
+    
+    for (let i = 0; i < b64Image.length; i += CHUNK_SIZE) {
+      const chunk = b64Image.slice(i, Math.min(i + CHUNK_SIZE, b64Image.length));
+      process.stdout.write(`${ESC}]1337;FilePart=${chunk}${BEL}`);
+    }
+    
+    process.stdout.write(`${ESC}]1337;FileEnd${BEL}\n`);
+  } else {
+    // DCS passthrough fallback for older tmux versions
+    // Wrap the OSC sequence in tmux DCS passthrough
+    const sequence = `${ESC}]1337;File=${args}:${b64Image}${BEL}`;
+    process.stdout.write(`${ESC}Ptmux;${ESC}${sequence}${ESC}\\\n`);
   }
-  
-  process.stdout.write(`${ESC}]1337;FileEnd${BEL}\n`);
 }
 
 /**
@@ -77,7 +86,7 @@ export function itermShowImage(b64Image: string, opts?: ItermImageOptions): void
  */
 export function buildItermSequence(b64Image: string, opts?: ItermImageOptions): string {
   const name = b64(opts?.name || 'image.png');
-  const width = opts?.width || '64ch';
+  const width = opts?.width || '64';  // Default to 64 cells (not '64ch')
   const height = opts?.height || 'auto';
   const preserveAspectRatio = opts?.preserveAspectRatio !== false ? 1 : 0;
   
@@ -91,7 +100,7 @@ export function buildItermSequence(b64Image: string, opts?: ItermImageOptions): 
  */
 export function buildItermMultipartSequences(b64Image: string, opts?: ItermImageOptions): string[] {
   const name = b64(opts?.name || 'image.png');
-  const width = opts?.width || '64ch';
+  const width = opts?.width || '64';  // Default to 64 cells (not '64ch')
   const height = opts?.height || 'auto';
   const preserveAspectRatio = opts?.preserveAspectRatio !== false ? 1 : 0;
   

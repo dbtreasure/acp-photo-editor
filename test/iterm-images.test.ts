@@ -29,6 +29,13 @@ describe('iTerm2 Image Renderer', () => {
       
       delete process.env.TERM_PROGRAM;
       expect(isITerm2()).toBe(false);
+      
+      // Also detect via ITERM_SESSION_ID
+      process.env.ITERM_SESSION_ID = 'w0t0p0:FD4E7C9F-8E58-4F36-9658-7C5E92D0816D';
+      expect(isITerm2()).toBe(true);
+      
+      delete process.env.ITERM_SESSION_ID;
+      expect(isITerm2()).toBe(false);
     });
     
     it('detects tmux correctly', () => {
@@ -65,7 +72,7 @@ describe('iTerm2 Image Renderer', () => {
       expect(sequence).toContain(`name=${encodedName}`);
       
       // Should contain default dimensions
-      expect(sequence).toContain('width=64ch');
+      expect(sequence).toContain('width=64');  // 64 cells, not '64ch'
       expect(sequence).toContain('height=auto');
       expect(sequence).toContain('preserveAspectRatio=1');
       expect(sequence).toContain('inline=1');

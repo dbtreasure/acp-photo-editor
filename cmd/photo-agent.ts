@@ -48,14 +48,18 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       connectMCPServers(mcpServers, params.cwd).then(
         () => {
           logger.line('info', { mcp_connected: mcpServers.map((s: MCPServerConfig) => s.name) });
+          send({ jsonrpc: '2.0', id, result: { sessionId: currentSessionId } });
         },
         (err) => {
           logger.line('error', { mcp_connection_failed: err.message });
+          // Still respond with session even if MCP fails (fallback to Phase 1)
+          send({ jsonrpc: '2.0', id, result: { sessionId: currentSessionId } });
         }
       );
+    } else {
+      // No MCP servers, respond immediately
+      send({ jsonrpc: '2.0', id, result: { sessionId: currentSessionId } });
     }
-    
-    send({ jsonrpc: '2.0', id, result: { sessionId: currentSessionId } });
     return;
   }
 

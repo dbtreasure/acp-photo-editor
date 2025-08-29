@@ -11,7 +11,7 @@ import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src
 import { isITerm2, itermShowImage } from '../src/common/iterm-images';
 
 const args = minimist(process.argv.slice(2), {
-  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images'],
+  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images', 'thumb-width', 'thumb-height'],
   boolean: ['interactive', 'mcp'],
   alias: { i: 'interactive' },
   default: { 
@@ -152,8 +152,8 @@ async function main() {
                     
                     itermShowImage(block.data, {
                       name,
-                      width: '64ch',
-                      height: 'auto',
+                      width: args['thumb-width'] || '64',  // Default to 64 cells
+                      height: args['thumb-height'] || 'auto',
                       preserveAspectRatio: true
                     });
                     
@@ -199,6 +199,8 @@ async function main() {
       console.log('');
       console.log('Options:');
       console.log('  --tty-images=auto|iterm|off - Control inline image display (default: auto)');
+      console.log('  --thumb-width=<value>       - Set thumbnail width (default: 64 cells)');
+      console.log('  --thumb-height=<value>      - Set thumbnail height (default: auto)');
       console.log('');
 
       const rl = readline.createInterface({

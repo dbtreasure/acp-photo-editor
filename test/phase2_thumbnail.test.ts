@@ -14,19 +14,11 @@ describe('Phase 2 - MCP Thumbnail Integration', () => {
   });
 
   it('receives image thumbnail via tool_call_update', async () => {
-    const client = path.resolve(__dirname, '../dist/cmd/photo-client.js');
-    const agent = 'node';
-    const agentArgs = path.resolve(__dirname, '../dist/cmd/photo-agent.js');
+    const agent = path.resolve(__dirname, '../dist/cmd/photo-agent.js');
     const cwd = path.resolve(__dirname, '..');
     
-    // Run client with MCP enabled
-    const proc = spawn('node', [
-      client,
-      '--agent', agent,
-      '--agentArgs', agentArgs,
-      '--cwd', cwd,
-      '--mcp'  // Enable MCP
-    ], { 
+    // Run agent directly (not via client) to send custom prompts
+    const proc = spawn('node', [agent], { 
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { 
         ...process.env,
@@ -46,25 +38,44 @@ describe('Phase 2 - MCP Thumbnail Integration', () => {
       const text = chunk.toString();
       output += text;
       
-      // Parse for session ID
-      const sessionMatch = text.match(/Session created: (sess_\w+)/);
-      if (sessionMatch) {
-        sessionId = sessionMatch[1];
-      }
-      
-      // Check for metadata
-      if (text.includes('[metadata]') && text.includes('+EXIF')) {
-        gotMetadata = true;
-      }
-      
-      // Check for thumbnail
-      if (text.includes('[thumbnail]') && text.includes('image/png')) {
-        gotThumbnail = true;
-      }
-      
-      // Check for completion
-      if (text.includes('[completed]')) {
-        gotCompleted = true;
+      // Parse JSON-RPC messages
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          
+          // Check for session ID in response
+          if (msg.result?.sessionId) {
+            sessionId = msg.result.sessionId;
+          }
+          
+          // Check for session updates
+          if (msg.method === 'session/update') {
+            const update = msg.params;
+            if (update.sessionUpdate === 'tool_call_update') {
+              const toolCallId = update.toolCallId;
+              const status = update.status;
+              const content = update.content;
+              
+              if (status === 'in_progress' && content) {
+                for (const item of content) {
+                  if (item.type === 'content') {
+                    const block = item.content;
+                    if (block.type === 'text' && block.text.includes('EXIF')) {
+                      gotMetadata = true;
+                    } else if (block.type === 'image' && block.mimeType === 'image/png') {
+                      gotThumbnail = true;
+                    }
+                  }
+                }
+              } else if (status === 'completed') {
+                gotCompleted = true;
+              }
+            }
+          }
+        } catch (e) {
+          // Not JSON, ignore
+        }
       }
     });
     
@@ -168,18 +179,11 @@ describe('Phase 2 - MCP Thumbnail Integration', () => {
   }, 10000);
   
   it('handles unsupported file types gracefully', async () => {
-    const client = path.resolve(__dirname, '../dist/cmd/photo-client.js');
-    const agent = 'node';
-    const agentArgs = path.resolve(__dirname, '../dist/cmd/photo-agent.js');
+    const agent = path.resolve(__dirname, '../dist/cmd/photo-agent.js');
     const cwd = path.resolve(__dirname, '..');
     
-    const proc = spawn('node', [
-      client,
-      '--agent', agent,
-      '--agentArgs', agentArgs,
-      '--cwd', cwd,
-      '--mcp'
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    // Run agent directly (not via client) to send custom prompts
+    const proc = spawn('node', [agent], { stdio: ['pipe', 'pipe', 'pipe'] });
     
     let output = '';
     let gotError = false;
@@ -189,13 +193,30 @@ describe('Phase 2 - MCP Thumbnail Integration', () => {
       const text = chunk.toString();
       output += text;
       
-      const sessionMatch = text.match(/Session created: (sess_\w+)/);
-      if (sessionMatch) {
-        sessionId = sessionMatch[1];
-      }
-      
-      if (text.includes('[failed]') || text.includes('Failed to process') || text.includes('Unsupported')) {
-        gotError = true;
+      // Parse JSON-RPC messages
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          
+          // Check for session ID in response
+          if (msg.result?.sessionId) {
+            sessionId = msg.result.sessionId;
+          }
+          
+          // Check for error in tool_call_update or agent_message_chunk
+          if (msg.method === 'session/update') {
+            const update = msg.params;
+            if (update.sessionUpdate === 'tool_call_update' && update.status === 'failed') {
+              gotError = true;
+            }
+            if (update.sessionUpdate === 'agent_message_chunk' && update.content?.text?.includes('Error')) {
+              gotError = true;
+            }
+          }
+        } catch (e) {
+          // Not JSON, ignore
+        }
       }
     });
     
