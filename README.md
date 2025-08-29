@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 2a
+# ACP Photo Editor — Phase 3
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now with iTerm2 inline image support.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now with non-destructive edit stack and crop/straighten operations.
 
 ## Quick Start
 
@@ -22,21 +22,39 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 2a
+## What's New in Phase 3
 
-Phase 2 adds MCP server integration for real image processing:
+Phase 3 adds non-destructive edit stack with crop/straighten operations:
+- **Edit Stack v1**: Non-destructive edit operations stored per image
+- **Crop & Straighten**: Apply crop with aspect ratios and rotation angles
+- **Undo/Redo**: Full undo/redo support with edit history
+- **Live Previews**: Real-time preview generation with edits applied
+- **Amend-Last**: Smart operation replacement to prevent stack bloat
+- **Cache Optimization**: Cached image decoding and preview rendering
+
+Previous Phase 2 features:
 - **MCP Image Server**: Standalone server for image operations
 - **Real Thumbnails**: Generate actual image thumbnails (1024px max)
 - **Metadata Extraction**: Get dimensions, file size, MIME type
 - **Tool Call Streaming**: Progressive updates with tool_call_update
-- **Gallery View**: Display loaded thumbnails in client
+- **iTerm2 Support**: Inline image display in compatible terminals
 
-Phase 2a adds iTerm2 inline image support:
-- **iTerm2 Detection**: Auto-detects iTerm2 terminal
-- **Inline Display**: Renders thumbnails directly in terminal
-- **Tmux Support**: Uses multipart transfer for tmux compatibility
-- **OSC 1337 Protocol**: Native iTerm2 image protocol
-- **WezTerm Compatible**: Also works in WezTerm
+## Edit Commands
+
+### Crop & Straighten
+- `:crop --aspect 1:1` - Crop to aspect ratio (square, 16:9, 3:2, etc)
+- `:crop --rect 0.1,0.1,0.8,0.8` - Crop to normalized rectangle
+- `:crop --angle -2.5` - Rotate/straighten by degrees
+- `:crop --aspect 16:9 --angle 1.0` - Combined operations
+
+### Edit History
+- `:undo` - Undo last edit operation
+- `:redo` - Redo previously undone operation  
+- `:reset` - Clear all edits
+
+### File Operations
+- `:open <path>` - Load image file(s)
+- `:gallery` - Show loaded thumbnails
 
 ## Architecture
 
@@ -54,23 +72,45 @@ Phase 2a adds iTerm2 inline image support:
 ```bash
 npm run interactive
 
-> :open test/assets/test.jpg
+# Load an image
+> :open test/assets/test-landscape.jpg
 
 Opening resources...
-
-Resources:
-Name        URI                             MIME          Status
-----        ---                             ----          ------
-test.jpg    ...assets/test.jpg              image/jpeg    SENDING
-
-[metadata:img_1] test.jpg 1024×768, 1.2MB, image/jpeg +EXIF
+[metadata:img_1] test-landscape.jpg 1024×768, 1.2MB, image/jpeg +EXIF
 [thumbnail:img_1] Received image/png (45KB)
-[iTerm2] Displayed inline: test.jpg    # <-- Image appears here in iTerm2
+[iTerm2] Displayed inline: test-landscape.jpg
 [completed:img_1]
 
-[result] stopReason: end_turn
+# Apply a square crop
+> :crop --aspect 1:1
 
-1 thumbnail(s) loaded. Use :gallery to view.
+Executing :crop...
+[edit_preview] Stack: 1 ops | Last: crop aspect=1:1
+[edit_preview] Received image/png (32KB)
+[iTerm2] Displayed inline preview
+[completed:edit_preview]
+
+# Straighten the image
+> :crop --angle -2.5
+
+Executing :crop...
+[edit_preview] Stack: 1 ops | Last: crop angle=-2.5°
+[edit_preview] Received image/png (35KB)
+[completed:edit_preview]
+
+# Undo last operation
+> :undo
+
+Executing :undo...
+[edit_preview] Stack: 0 ops | Last: No operations
+[edit_preview] Received original preview
+
+# Apply combined operation
+> :crop --aspect 16:9 --angle 1.0
+
+Executing :crop...
+[edit_preview] Stack: 1 ops | Last: crop aspect=16:9 angle=1.0°
+[completed:edit_preview]
 
 > :gallery
 
@@ -110,20 +150,23 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
 ### Tools
 
 1. **read_image_meta(uri)** - Extract image metadata
-   ```json
-   {
-     "mime": "image/jpeg",
-     "width": 1024,
-     "height": 768,
-     "sizeBytes": 1234567,
-     "exif": { ... }
-   }
-   ```
+   - Returns human-readable text: "filename.jpg 1024×768, 1.2MB, image/jpeg +EXIF"
 
 2. **render_thumbnail(uri, maxPx)** - Generate thumbnail
    - Returns base64-encoded PNG
    - Preserves aspect ratio
    - Default max dimension: 1024px
+
+3. **render_preview(uri, editStack, maxPx)** - Apply edits and generate preview
+   - Accepts edit stack with crop/rotate operations
+   - Returns base64-encoded PNG with edits applied
+   - Cached for performance
+   - Default max dimension: 1024px
+
+4. **compute_aspect_rect(width, height, aspect)** - Calculate crop rectangle
+   - Computes maximum inscribed rectangle for aspect ratio
+   - Returns normalized coordinates [0,1]
+   - Supports keywords: square, landscape, portrait, wide, ultrawide
 
 ### Supported Formats
 - Standard: JPEG, PNG, WebP, HEIC/HEIF, TIFF, SVG, GIF

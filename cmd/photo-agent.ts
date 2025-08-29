@@ -5,6 +5,7 @@ import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { MCPServerConfig, ContentBlock, ToolCallContent } from '../src/acp/types';
+import { EditStackManager } from '../src/editStack';
 import path from 'path';
 
 const logger = new NdjsonLogger('agent');
@@ -13,6 +14,10 @@ type Req = { id:number, method:string, params:any };
 let currentSessionId: string | null = null;
 let cancelled = false;
 let mcpClients: Map<string, Client> = new Map();
+
+// Per-image edit state management
+const imageStacks = new Map<string, EditStackManager>();
+let lastLoadedImage: string | null = null;
 
 // Read stdin as NDJSON
 createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
@@ -80,6 +85,29 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
     resourceLinks.forEach((link: any) => {
       logger.line('info', { resource_link: link });
     });
+    
+    // Check for edit commands (crop, undo, redo, reset)
+    if (text.startsWith(':crop') || text === ':undo' || text === ':redo' || text === ':reset') {
+      handleEditCommand(text, currentSessionId).then(
+        () => {
+          if (!cancelled) {
+            send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+          } else {
+            send({ jsonrpc: '2.0', id, result: { stopReason: 'cancelled' } });
+          }
+        },
+        (err) => {
+          logger.line('error', { edit_command_failed: err.message });
+          notify('session/update', {
+            sessionId: currentSessionId,
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: `Error: ${err.message}` }
+          });
+          send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+        }
+      );
+      return;
+    }
     
     // Handle resource links with MCP
     if (resourceLinks.length > 0 && mcpClients.size > 0) {
@@ -201,6 +229,15 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
     const link = resourceLinks[i];
     const toolCallId = `img_${i + 1}`;
     
+    // Track loaded image for edit operations
+    if (link.uri && link.uri.startsWith('file://')) {
+      lastLoadedImage = link.uri;
+      // Create edit stack if doesn't exist
+      if (!imageStacks.has(link.uri)) {
+        imageStacks.set(link.uri, new EditStackManager(link.uri));
+      }
+    }
+    
     // Start tool call
     notify('session/update', {
       sessionId,
@@ -303,6 +340,193 @@ function send(obj:any) {
 function notify(method:string, params:any) {
   const msg = { jsonrpc: '2.0', method, params };
   send(msg);
+}
+
+async function handleEditCommand(command: string, sessionId: string): Promise<void> {
+  // Check if we have an image loaded
+  if (!lastLoadedImage) {
+    throw new Error('No image loaded. Please load an image first.');
+  }
+  
+  const stackManager = imageStacks.get(lastLoadedImage);
+  if (!stackManager) {
+    throw new Error('No edit stack for current image');
+  }
+  
+  const client = mcpClients.get('image');
+  if (!client) {
+    throw new Error('No MCP image server available');
+  }
+  
+  // Parse command
+  if (command === ':undo') {
+    if (!stackManager.undo()) {
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Nothing to undo' }
+      });
+      return;
+    }
+  } else if (command === ':redo') {
+    if (!stackManager.redo()) {
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Nothing to redo' }
+      });
+      return;
+    }
+  } else if (command === ':reset') {
+    stackManager.reset();
+  } else if (command.startsWith(':crop')) {
+    // Parse crop arguments
+    const args = command.substring(5).trim();
+    const cropOptions: any = {};
+    
+    // Parse --aspect
+    const aspectMatch = args.match(/--aspect\s+(\S+)/);
+    if (aspectMatch) {
+      cropOptions.aspect = aspectMatch[1];
+    }
+    
+    // Parse --rect
+    const rectMatch = args.match(/--rect\s+([\d.,]+)/);
+    if (rectMatch) {
+      const coords = rectMatch[1].split(',').map(parseFloat);
+      if (coords.length === 4) {
+        cropOptions.rectNorm = coords as [number, number, number, number];
+      }
+    }
+    
+    // Parse --angle
+    const angleMatch = args.match(/--angle\s+([-\d.]+)/);
+    if (angleMatch) {
+      cropOptions.angleDeg = parseFloat(angleMatch[1]);
+    }
+    
+    // Parse --new-op flag
+    const forceNew = args.includes('--new-op');
+    cropOptions.forceNew = forceNew;
+    
+    // If aspect but no rect, we need to get image dimensions
+    if (cropOptions.aspect && !cropOptions.rectNorm) {
+      // Call read_image_meta to get dimensions
+      const metaResult = await client.callTool({
+        name: 'read_image_meta',
+        arguments: { uri: lastLoadedImage }
+      });
+      
+      // Parse dimensions from meta text
+      const content = metaResult.content as any[] | undefined;
+      const metaText = content?.[0]?.text || '';
+      const dimMatch = metaText.match(/(\d+)×(\d+)/);
+      if (dimMatch) {
+        const width = parseInt(dimMatch[1]);
+        const height = parseInt(dimMatch[2]);
+        const rect = stackManager.computeAspectRect(width, height, cropOptions.aspect);
+        if (rect) {
+          cropOptions.rectNorm = rect;
+        }
+      }
+    }
+    
+    // Add crop operation to stack
+    stackManager.addCrop(cropOptions);
+  } else {
+    throw new Error(`Unknown command: ${command}`);
+  }
+  
+  // Render preview with current stack
+  const toolCallId = 'edit_preview';
+  
+  // Start tool call
+  notify('session/update', {
+    sessionId,
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    status: 'in_progress',
+    rawInput: { command }
+  });
+  
+  try {
+    // Get current stack
+    const editStack = stackManager.getStack();
+    
+    // Call render_preview
+    const previewResult = await client.callTool({
+      name: 'render_preview',
+      arguments: { 
+        uri: lastLoadedImage,
+        editStack,
+        maxPx: 1024
+      }
+    });
+    
+    // Send stack info
+    const stackInfo = `Stack: ${stackManager.getStackLength()} ops | Last: ${stackManager.getLastOpSummary()}`;
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'in_progress',
+      content: [{
+        type: 'content',
+        content: { type: 'text', text: stackInfo }
+      }]
+    });
+    
+    // Find image content
+    const imageContent = Array.isArray(previewResult.content)
+      ? previewResult.content.find((c: any) => c.type === 'image')
+      : null;
+      
+    if (imageContent) {
+      // Send preview image
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: 'in_progress',
+        content: [{
+          type: 'content',
+          content: {
+            type: 'image',
+            data: imageContent.data,
+            mimeType: imageContent.mimeType
+          }
+        }]
+      });
+    }
+    
+    // Mark as completed
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'completed'
+    });
+    
+  } catch (error: any) {
+    logger.line('error', {
+      edit_preview_failed: error.message
+    });
+    
+    // Send error update
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'failed',
+      content: [{
+        type: 'content',
+        content: {
+          type: 'text',
+          text: `Failed to render preview: ${error.message}`
+        }
+      }]
+    });
+  }
 }
 
 // Transport manages process lifecycle - no manual cleanup needed

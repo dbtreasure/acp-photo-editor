@@ -193,6 +193,14 @@ async function main() {
       console.log('Commands:');
       console.log('  :ping            - Send a ping message to the agent');
       console.log('  :open <path...>  - Open image file(s)');
+      console.log('  :crop [options]  - Apply crop/straighten to current image');
+      console.log('    --aspect 1:1   - Crop to aspect ratio (1:1, 16:9, 3:2, etc)');
+      console.log('    --rect x,y,w,h - Crop to normalized rectangle [0-1]');
+      console.log('    --angle deg    - Rotate/straighten by degrees');
+      console.log('    --new-op       - Force new operation (don\'t amend last)');
+      console.log('  :undo            - Undo last edit operation');
+      console.log('  :redo            - Redo previously undone operation');
+      console.log('  :reset           - Reset to original image');
       console.log('  :cancel          - Cancel the current prompt');
       console.log('  :gallery         - Show thumbnail gallery');
       console.log('  :exit            - Exit the client');
@@ -230,8 +238,24 @@ async function main() {
             let index = 1;
             for (const [id, thumb] of thumbnails) {
               console.log(`${index}. ${thumb.metadata || 'No metadata'}`);
-              if (thumb.image) {
-                console.log(`   Thumbnail: ${thumb.mimeType} (${Math.round(thumb.image.length * 0.75 / 1024)}KB)`);
+              if (thumb.image && thumb.mimeType) {
+                const sizeKB = Math.round(thumb.image.length * 0.75 / 1024);
+                console.log(`   Thumbnail: ${thumb.mimeType} (${sizeKB}KB)`);
+                
+                // Display image in iTerm2 if supported
+                if (useItermImages) {
+                  try {
+                    const name = thumb.metadata?.split(' ')[0] || `gallery_${index}.png`;
+                    itermShowImage(thumb.image, {
+                      name,
+                      width: args['thumb-width'] || '32',  // Smaller for gallery view
+                      height: args['thumb-height'] || 'auto',
+                      preserveAspectRatio: true
+                    });
+                  } catch (err: any) {
+                    console.log(`   [iTerm2] Failed to display: ${err.message}`);
+                  }
+                }
               }
               index++;
             }
@@ -247,6 +271,24 @@ async function main() {
               const pRes = await peer.request('session/prompt', {
                 sessionId,
                 prompt: [{ type: 'text', text: 'ping' }]
+              });
+              console.log(`[result] stopReason: ${pRes.stopReason}`);
+            } catch (e: any) {
+              console.error('[error]', e?.message || String(e));
+            }
+            isPrompting = false;
+          }
+        } else if (cmd.startsWith(':crop') || cmd === ':undo' || cmd === ':redo' || cmd === ':reset') {
+          // Handle edit commands
+          if (isPrompting) {
+            console.log('A prompt is already in progress. Use :cancel to cancel it.');
+          } else {
+            isPrompting = true;
+            console.log(`Executing ${cmd.split(' ')[0]}...`);
+            try {
+              const pRes = await peer.request('session/prompt', {
+                sessionId,
+                prompt: [{ type: 'text', text: cmd }]
               });
               console.log(`[result] stopReason: ${pRes.stopReason}`);
             } catch (e: any) {
