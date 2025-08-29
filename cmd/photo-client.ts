@@ -3,6 +3,7 @@ import minimist from 'minimist';
 import { spawn } from 'child_process';
 import path from 'path';
 import readline from 'readline';
+import { pathToFileURL } from 'url';
 import { JsonRpcPeer } from '../src/common/jsonrpc';
 import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
@@ -104,7 +105,6 @@ async function main() {
         prompt: '> '
       });
 
-      let currentPromptId: number | null = null;
       let isPrompting = false;
 
       rl.prompt();
@@ -153,7 +153,7 @@ async function main() {
               const resources: ContentBlockResourceLink[] = parts.map(p => {
                 const absPath = path.resolve(p);
                 const basename = path.basename(absPath);
-                const uri = `file://${absPath}`;
+                const uri = pathToFileURL(absPath).href;
                 const mimeType = guessMimeType(basename);
                 
                 return {

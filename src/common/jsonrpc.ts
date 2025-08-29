@@ -30,7 +30,7 @@ export class JsonRpcPeer {
       return;
     }
     if (obj.method) {
-      // notification only (Phase 0)
+      // notification handler
       const cbs = this.notifyHandlers.get(obj.method) || [];
       for (const cb of cbs) cb(obj.params);
       return;

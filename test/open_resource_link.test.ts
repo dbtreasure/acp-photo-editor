@@ -12,6 +12,7 @@ function runOpenDemo(): Promise<{ code: number, out: string[] }> {
     // Create a script that simulates opening resources
     const script = `
       const { spawn } = require('child_process');
+      const readline = require('readline');
       const path = require('path');
       
       const child = spawn('node', [
@@ -22,26 +23,39 @@ function runOpenDemo(): Promise<{ code: number, out: string[] }> {
         '--interactive'
       ], { stdio: ['pipe', 'pipe', 'pipe'] });
       
-      let output = '';
-      child.stdout.on('data', (data) => {
-        output += data.toString();
-        process.stdout.write(data);
+      const rl = readline.createInterface({
+        input: child.stdout,
+        crlfDelay: Infinity
+      });
+      
+      let sentOpen = false;
+      let receivedAck = false;
+      
+      rl.on('line', (line) => {
+        process.stdout.write(line + '\\n');
+        
+        // Wait for prompt
+        if (line.includes('>') && !sentOpen) {
+          sentOpen = true;
+          child.stdin.write(':open /fake/path/peppers.jpg /fake/path/photo.raf\\n');
+        }
+        
+        // Wait for acknowledgment
+        if (line.includes('[agent] ack:')) {
+          receivedAck = true;
+        }
+        
+        // Exit after getting stopReason
+        if (line.includes('stopReason') && receivedAck) {
+          setTimeout(() => {
+            child.stdin.write(':exit\\n');
+          }, 100);
+        }
       });
       
       child.stderr.on('data', (data) => {
         process.stderr.write(data);
       });
-      
-      // Wait for initialization
-      setTimeout(() => {
-        // Send :open command with two fake paths
-        child.stdin.write(':open /fake/path/peppers.jpg /fake/path/photo.raf\\n');
-        
-        // Wait for response then exit
-        setTimeout(() => {
-          child.stdin.write(':exit\\n');
-        }, 1000);
-      }, 1000);
       
       child.on('close', (code) => {
         process.exit(code || 0);

@@ -10,6 +10,12 @@ export function guessMimeType(filename: string): string | undefined {
     'webp': 'image/webp',
     'bmp': 'image/bmp',
     'svg': 'image/svg+xml',
+    'tif': 'image/tiff',
+    'tiff': 'image/tiff',
+    'heic': 'image/heic',
+    'heif': 'image/heif',
+    'jxl': 'image/jxl',
+    'jp2': 'image/jp2',
     
     // RAW formats
     'raf': 'image/x-raw',  // Fuji

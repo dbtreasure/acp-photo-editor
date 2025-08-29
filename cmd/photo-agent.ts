@@ -22,7 +22,7 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       protocolVersion: 1,
       agentCapabilities: {
         loadSession: false,
-        promptCapabilities: { image: false, audio: false, embeddedContext: false }
+        promptCapabilities: { image: true, audio: false, embeddedContext: false }
       },
       authMethods: []
     };
