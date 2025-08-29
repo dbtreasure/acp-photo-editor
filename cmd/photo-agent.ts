@@ -4,7 +4,6 @@ import { NdjsonLogger } from '../src/common/logger';
 import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig, ContentBlock, ToolCallContent } from '../src/acp/types';
 import path from 'path';
 
@@ -14,7 +13,6 @@ type Req = { id:number, method:string, params:any };
 let currentSessionId: string | null = null;
 let cancelled = false;
 let mcpClients: Map<string, Client> = new Map();
-let mcpProcesses: Map<string, ChildProcess> = new Map();
 
 // Read stdin as NDJSON
 createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
@@ -150,23 +148,17 @@ async function connectMCPServers(servers: MCPServerConfig[], cwd: string): Promi
   for (const server of servers) {
     try {
       const args = server.args || [];
+      // Pass session cwd via MCP_ROOT env var for proper sandboxing
       const env: Record<string, string> = Object.fromEntries(
-        Object.entries({ ...process.env, ...server.env })
+        Object.entries({ ...process.env, ...server.env, MCP_ROOT: cwd })
           .filter(([_, v]) => v !== undefined) as [string, string][]
       );
       
-      // Spawn the MCP server process
-      const serverProcess = spawn(server.command, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        cwd,
-        env
-      });
-      
-      // Create transport and client
+      // Let StdioClientTransport handle spawning - no manual spawn
       const transport = new StdioClientTransport({
         command: server.command,
         args,
-        env: env as any
+        env
       });
       
       const client = new Client({
@@ -176,12 +168,11 @@ async function connectMCPServers(servers: MCPServerConfig[], cwd: string): Promi
         capabilities: {}
       });
       
-      // Connect the client
+      // Connect the client (transport will spawn the process)
       await client.connect(transport);
       
-      // Store the client and process
+      // Store only the client - transport manages process lifecycle
       mcpClients.set(server.name, client);
-      mcpProcesses.set(server.name, serverProcess);
       
       logger.line('info', { mcp_server_connected: server.name });
     } catch (error: any) {
@@ -222,14 +213,11 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
         arguments: { uri: link.uri }
       });
       
-      if (metaResult.content && Array.isArray(metaResult.content) && metaResult.content.length > 0) {
-        const metaText = metaResult.content[0].type === 'text' 
-          ? metaResult.content[0].text 
-          : '';
-        
-        const metadata = JSON.parse(metaText);
-        const displayText = `${link.name || path.basename(link.uri)} ${metadata.width}×${metadata.height}, ${(metadata.sizeBytes / 1024 / 1024).toFixed(1)}MB, ${metadata.mime}`;
-        
+      // Find text content (human-readable metadata)
+      const metaContent = Array.isArray(metaResult.content) 
+        ? metaResult.content.find((c: any) => c.type === 'text')
+        : null;
+      if (metaContent) {
         // Send metadata update
         notify('session/update', {
           sessionId,
@@ -238,7 +226,7 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
           status: 'in_progress',
           content: [{
             type: 'content',
-            content: { type: 'text', text: displayText }
+            content: { type: 'text', text: metaContent.text }
           }]
         });
       }
@@ -249,14 +237,12 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
         arguments: { uri: link.uri, maxPx: 1024 }
       });
       
-      if (thumbResult.content && Array.isArray(thumbResult.content) && thumbResult.content.length > 0) {
-        const thumbText = thumbResult.content[0].type === 'text' 
-          ? thumbResult.content[0].text 
-          : '';
-        
-        const thumbData = JSON.parse(thumbText);
-        
-        // Send thumbnail update
+      // Find image content
+      const thumbContent = Array.isArray(thumbResult.content)
+        ? thumbResult.content.find((c: any) => c.type === 'image')
+        : null;
+      if (thumbContent) {
+        // Send thumbnail update with structured image
         notify('session/update', {
           sessionId,
           sessionUpdate: 'tool_call_update',
@@ -266,8 +252,8 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
             type: 'content',
             content: { 
               type: 'image', 
-              data: thumbData.image,
-              mimeType: thumbData.mime
+              data: thumbContent.data,
+              mimeType: thumbContent.mimeType
             }
           }]
         });
@@ -315,9 +301,4 @@ function notify(method:string, params:any) {
   send(msg);
 }
 
-// Cleanup on exit
-process.on('exit', () => {
-  for (const [name, proc] of mcpProcesses) {
-    proc.kill();
-  }
-});
+// Transport manages process lifecycle - no manual cleanup needed

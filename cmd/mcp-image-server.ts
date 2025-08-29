@@ -15,7 +15,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
-const cwd = process.cwd();
+// Use MCP_ROOT from environment for proper session sandboxing
+const root = process.env.MCP_ROOT || process.cwd();
 
 const ReadImageMetaArgsSchema = z.object({
   uri: z.url()
@@ -41,12 +42,12 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 function validatePath(filePath: string): void {
   const resolved = path.resolve(filePath);
-  const relative = path.relative(cwd, resolved);
+  const relative = path.relative(root, resolved);
   
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new McpError(
       ErrorCode.InvalidRequest,
-      `Path outside working directory: ${filePath}`
+      `Path outside root directory: ${filePath}`
     );
   }
 }
@@ -87,9 +88,9 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return {
     resources: [
       {
-        uri: `file://${cwd}`,
-        name: 'Working Directory Images',
-        description: 'Access to image files in the current working directory',
+        uri: `file://${root}`,
+        name: 'Session Root Images',
+        description: 'Access to image files in the session root directory',
         mimeType: 'text/plain'
       }
     ]
@@ -205,51 +206,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     const mimeType = await getMimeType(filePath);
     if (!SUPPORTED_MIMES.has(mimeType)) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Unsupported mime type: ${mimeType}`
-          }
-        ]
-      };
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Unsupported mime type: ${mimeType}`
+      );
     }
     
     try {
       const metadata = await sharp(filePath).metadata();
       
-      const result = {
-        mime: mimeType,
-        width: metadata.width || 0,
-        height: metadata.height || 0,
-        sizeBytes: stats.size,
-        exif: metadata.exif ? { 
-          // Extract some safe EXIF data
-          orientation: metadata.orientation,
-          density: metadata.density,
-          hasProfile: metadata.hasProfile,
-          channels: metadata.channels,
-          depth: metadata.depth
-        } : undefined
-      };
+      const hasExif = !!metadata.exif;
+      const width = metadata.width || 0;
+      const height = metadata.height || 0;
+      const sizeMB = (stats.size / 1024 / 1024).toFixed(1);
+      
+      // Return human-readable metadata
+      const metaText = `${path.basename(filePath)} ${width}×${height}, ${sizeMB}MB, ${mimeType}${hasExif ? ' +EXIF' : ''}`;
       
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2)
+            text: metaText
           }
         ]
       };
     } catch (error: any) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error reading metadata: ${error.message}`
-          }
-        ]
-      };
+      // Re-throw as McpError for consistent error handling
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to read image metadata: ${error.message}`
+      );
     }
   }
   
@@ -276,14 +263,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     const mimeType = await getMimeType(filePath);
     if (!SUPPORTED_MIMES.has(mimeType)) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Unsupported mime type: ${mimeType}`
-          }
-        ]
-      };
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Unsupported mime type: ${mimeType}`
+      );
     }
     
     try {
@@ -296,26 +279,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         .png() // Always output as PNG for consistency
         .toBuffer();
       
+      // Return structured image content directly
       return {
         content: [
           {
-            type: 'text',
-            text: JSON.stringify({
-              image: thumbnail.toString('base64'),
-              mime: 'image/png'
-            })
+            type: 'image',
+            data: thumbnail.toString('base64'),
+            mimeType: 'image/png'
           }
         ]
       };
     } catch (error: any) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error rendering thumbnail: ${error.message}`
-          }
-        ]
-      };
+      // Re-throw as McpError for consistent error handling
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to render thumbnail: ${error.message}`
+      );
     }
   }
   

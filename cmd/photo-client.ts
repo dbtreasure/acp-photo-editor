@@ -115,7 +115,7 @@ async function main() {
                   thumbnails.set(toolCallId, {});
                 }
                 thumbnails.get(toolCallId)!.metadata = block.text;
-                console.log(`[metadata] ${block.text}`);
+                console.log(`[metadata:${toolCallId}] ${block.text}`);
               } else if (block.type === 'image') {
                 // Store image data
                 if (!thumbnails.has(toolCallId)) {
@@ -125,16 +125,25 @@ async function main() {
                 thumb.image = block.data;
                 thumb.mimeType = block.mimeType;
                 
-                // Display thumbnail info (in real app, would render the image)
+                // Display thumbnail info (truncate base64 in logs)
                 const sizeKB = Math.round(block.data.length * 0.75 / 1024); // Estimate from base64
-                console.log(`[thumbnail] Received ${block.mimeType} (${sizeKB}KB)`);
+                const preview = block.data.substring(0, 20) + '...';
+                console.log(`[thumbnail:${toolCallId}] Received ${block.mimeType} (${sizeKB}KB, data="${preview}")`);
+                
+                // Log truncated version for NDJSON
+                logger.line('info', { 
+                  tool_call_thumbnail: toolCallId,
+                  mimeType: block.mimeType,
+                  sizeKB,
+                  dataPreview: preview
+                });
               }
             }
           }
         } else if (status === 'completed') {
-          console.log(`[completed] ${toolCallId}`);
+          console.log(`[completed:${toolCallId}]`);
         } else if (status === 'failed') {
-          console.log(`[failed] ${toolCallId}`);
+          console.log(`[failed:${toolCallId}]`);
         }
       } 
       // Handle regular message chunks
