@@ -309,8 +309,37 @@ async function main() {
             isPrompting = true;
             console.log('Preparing export...');
             
-            // Note: Permission handling would be implemented here
-            // For now, we'll let the agent proceed assuming permission is granted
+            // Set up permission handler before sending the prompt
+            peer.on('session/request_permission', (msg: any) => {
+              // Handle both notification style (params) and request style (full object)
+              const params = msg.params || msg;
+              const requestId = msg.id;
+              
+              if (params && params.title) {
+                const { title, explanation, operations } = params;
+                console.log('\n📝 Permission Request:');
+                console.log(`   Title: ${title}`);
+                console.log(`   Explanation: ${explanation}`);
+                if (operations) {
+                  console.log('   Operations:');
+                  operations.forEach((op: any) => {
+                    const sizeInfo = op.bytesApprox ? ` (~${Math.round(op.bytesApprox / 1024)}KB)` : '';
+                    console.log(`     - ${op.kind}: ${path.basename(op.uri)}${sizeInfo}`);
+                  });
+                }
+                console.log('   [Auto-approving for demo]');
+                
+                // Send approval response if we have an id
+                if (requestId !== undefined) {
+                  const response = {
+                    jsonrpc: '2.0',
+                    id: requestId,
+                    result: { approved: true }
+                  };
+                  peer.send(response);
+                }
+              }
+            });
             
             try {
               const pRes = await peer.request('session/prompt', {

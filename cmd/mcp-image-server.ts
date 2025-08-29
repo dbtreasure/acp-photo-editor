@@ -704,6 +704,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     validatePath(srcPath);
     validatePath(dstPath);
     
+    // Warn on extension/format mismatch
+    const ext = path.extname(dstPath).toLowerCase();
+    if ((format === 'jpeg' && ext !== '.jpg' && ext !== '.jpeg') || 
+        (format === 'png' && ext !== '.png')) {
+      console.error(`Warning: format '${format}' does not match extension '${ext}' in ${path.basename(dstPath)}; proceeding anyway.`);
+    }
+    
     // Check source file
     const srcStats = await fs.stat(srcPath);
     if (srcStats.size > MAX_FILE_SIZE) {

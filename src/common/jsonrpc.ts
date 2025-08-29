@@ -30,9 +30,16 @@ export class JsonRpcPeer {
       return;
     }
     if (obj.method) {
-      // notification handler
-      const cbs = this.notifyHandlers.get(obj.method) || [];
-      for (const cb of cbs) cb(obj.params);
+      // Check if this is a request (has id) or notification (no id)
+      if (obj.id !== undefined) {
+        // This is a request that needs a response - pass the full object
+        const cbs = this.notifyHandlers.get(obj.method) || [];
+        for (const cb of cbs) cb(obj); // Pass full object, not just params
+      } else {
+        // This is a notification - pass just params
+        const cbs = this.notifyHandlers.get(obj.method) || [];
+        for (const cb of cbs) cb(obj.params);
+      }
       return;
     }
   }
@@ -57,6 +64,10 @@ export class JsonRpcPeer {
     this.sendRaw(msg);
   }
 
+  send(obj: any) {
+    this.sendRaw(obj);
+  }
+  
   private sendRaw(obj: any) {
     this.logger.line('send', obj);
     this.writer.write(JSON.stringify(obj) + '\n');

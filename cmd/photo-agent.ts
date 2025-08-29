@@ -21,9 +21,29 @@ let mcpClients: Map<string, Client> = new Map();
 const imageStacks = new Map<string, EditStackManager>();
 let lastLoadedImage: string | null = null;
 
+// Permission request tracking
+const pendingPermissions = new Map<number, {
+  resolve: (value: boolean) => void;
+  reject: (reason?: any) => void;
+  timeout: NodeJS.Timeout;
+}>();
+
 // Read stdin as NDJSON
 createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
   logger.line('recv', obj);
+  
+  // Check if this is a response to a pending permission request
+  if (obj && obj.jsonrpc === '2.0' && typeof obj.id === 'number' && pendingPermissions.has(obj.id)) {
+    const pending = pendingPermissions.get(obj.id)!;
+    clearTimeout(pending.timeout);
+    pendingPermissions.delete(obj.id);
+    
+    // Check if permission was granted
+    const approved = obj.result?.approved === true;
+    pending.resolve(approved);
+    return;
+  }
+  
   if (!obj || obj.jsonrpc !== '2.0' || typeof obj.method !== 'string') return;
   const id = obj.id;
   const method = obj.method;
@@ -644,9 +664,10 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
   ];
   
   // Send permission request
+  const permId = requestId + 1000; // Use offset to avoid ID collision
   const permissionRequest = {
     jsonrpc: '2.0',
-    id: requestId + 1000, // Use offset to avoid ID collision
+    id: permId,
     method: 'session/request_permission',
     params: {
       sessionId,
@@ -656,14 +677,24 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
     }
   };
   
-  // Send permission request and wait for response
-  send(permissionRequest);
+  // Create promise to wait for permission response
+  const granted = await new Promise<boolean>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingPermissions.delete(permId);
+      logger.line('info', { permission_timeout: permId });
+      resolve(false); // Auto-deny on timeout
+    }, 15000); // 15 second timeout
+    
+    pendingPermissions.set(permId, { resolve, reject, timeout });
+    send(permissionRequest);
+  });
   
-  // For now, we'll assume permission is granted and proceed
-  // In a real implementation, we'd wait for the permission response
+  if (!granted) {
+    throw new Error('Export cancelled: Permission denied by client');
+  }
   
-  // Start export with progress updates
-  const toolCallId = 'export_1';
+  // Start export with progress updates - use unique ID
+  const toolCallId = `export_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
   
   // Send initial progress
   notify('session/update', {
@@ -728,7 +759,15 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
     }
     
     // Send success summary
-    const summary = `Exported: ${path.basename(dstPath)} (${resultData.width}×${resultData.height}, ${Math.round(resultData.bytes / 1024)}KB, ${resultData.format})`;
+    const sizeKB = Math.round(resultData.bytes / 1024);
+    const sizeMB = resultData.bytes / (1024 * 1024);
+    const summary = `Exported: ${path.basename(dstPath)} (${resultData.width}×${resultData.height}, ${sizeKB}KB, ${resultData.format})`;
+    
+    // Warn if file is large
+    if (sizeMB > 10) {
+      logger.line('info', { large_export_warning: `Exported file is ${sizeMB.toFixed(1)}MB` });
+    }
+    
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
