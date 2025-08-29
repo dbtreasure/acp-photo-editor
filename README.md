@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 2
+# ACP Photo Editor — Phase 2a
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now with iTerm2 inline image support.
 
 ## Quick Start
 
@@ -22,7 +22,7 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 2
+## What's New in Phase 2a
 
 Phase 2 adds MCP server integration for real image processing:
 - **MCP Image Server**: Standalone server for image operations
@@ -30,6 +30,13 @@ Phase 2 adds MCP server integration for real image processing:
 - **Metadata Extraction**: Get dimensions, file size, MIME type
 - **Tool Call Streaming**: Progressive updates with tool_call_update
 - **Gallery View**: Display loaded thumbnails in client
+
+Phase 2a adds iTerm2 inline image support:
+- **iTerm2 Detection**: Auto-detects iTerm2 terminal
+- **Inline Display**: Renders thumbnails directly in terminal
+- **Tmux Support**: Uses multipart transfer for tmux compatibility
+- **OSC 1337 Protocol**: Native iTerm2 image protocol
+- **WezTerm Compatible**: Also works in WezTerm
 
 ## Architecture
 
@@ -56,9 +63,10 @@ Name        URI                             MIME          Status
 ----        ---                             ----          ------
 test.jpg    ...assets/test.jpg              image/jpeg    SENDING
 
-[metadata] test.jpg 1024×768, 1.2MB, image/jpeg
-[thumbnail] Received image/png (45KB)
-[completed] img_1
+[metadata:img_1] test.jpg 1024×768, 1.2MB, image/jpeg +EXIF
+[thumbnail:img_1] Received image/png (45KB)
+[iTerm2] Displayed inline: test.jpg    # <-- Image appears here in iTerm2
+[completed:img_1]
 
 [result] stopReason: end_turn
 
@@ -79,6 +87,16 @@ Thumbnail Gallery:
 - `:gallery` - Display loaded thumbnail information
 - `:cancel` - Cancel current operation
 - `:exit` - Exit the client
+
+### CLI Options
+
+- `--tty-images=auto|iterm|off` - Control inline image display
+  - `auto` (default): Auto-detect iTerm2
+  - `iterm`: Force iTerm2 mode
+  - `off`: Disable inline images
+- `--interactive` or `-i` - Start in interactive mode
+- `--agent <cmd>` - Specify agent command
+- `--cwd <path>` - Set working directory
 
 ## MCP Server Features
 
@@ -199,9 +217,9 @@ npm rebuild sharp
 - TypeScript 5+
 - macOS or Linux
 
-## Phase 2 Features
+## Phase 2a Features
 
-✅ Implemented:
+✅ Phase 2:
 - MCP server with Resources and Tools
 - Real image metadata extraction
 - Thumbnail generation with Sharp
@@ -209,6 +227,14 @@ npm rebuild sharp
 - Progressive content updates
 - Gallery view in client
 - Graceful fallback to Phase 1
+
+✅ Phase 2a (iTerm2 Support):
+- Automatic iTerm2 terminal detection
+- OSC 1337 inline image protocol
+- Tmux-safe multipart transfer (1MB chunks)
+- 64ch default width with aspect ratio preservation
+- WezTerm compatibility
+- Configurable via --tty-images flag
 
 🔒 Security:
 - CWD-bounded file access

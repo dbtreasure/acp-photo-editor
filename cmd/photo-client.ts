@@ -8,12 +8,16 @@ import { JsonRpcPeer } from '../src/common/jsonrpc';
 import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
 import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src/acp/types';
+import { isITerm2, itermShowImage } from '../src/common/iterm-images';
 
 const args = minimist(process.argv.slice(2), {
-  string: ['agent', 'agentArgs', 'cwd', 'demo'],
+  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images'],
   boolean: ['interactive', 'mcp'],
   alias: { i: 'interactive' },
-  default: { mcp: true }  // Enable MCP by default
+  default: { 
+    mcp: true,  // Enable MCP by default
+    'tty-images': 'auto'  // Auto-detect iTerm2
+  }
 });
 
 const logger = new NdjsonLogger('client');
@@ -25,6 +29,12 @@ async function main() {
   const agentCmd = args.agent || process.env.ACP_AGENT || '';
   const agentArgs = (args.agentArgs ? String(args.agentArgs).split(' ') : []);
   const cwd = path.resolve(args.cwd || process.cwd());
+  
+  // Determine TTY image rendering mode
+  const ttyImages = args['tty-images'];
+  const useItermImages = 
+    ttyImages === 'iterm' || 
+    (ttyImages === 'auto' && isITerm2());
 
   if (!agentCmd) {
     console.error('photo-client: --agent <cmd> is required');
@@ -98,6 +108,9 @@ async function main() {
     if (mcpServers.length > 0) {
       console.log(`MCP servers configured: ${mcpServers.map(s => s.name).join(', ')}`);
     }
+    if (useItermImages) {
+      console.log(`iTerm2 inline images: enabled${ttyImages === 'auto' ? ' (auto-detected)' : ''}`);
+    }
 
     // Set up session update handler
     peer.on('session/update', (params:any) => {
@@ -130,12 +143,33 @@ async function main() {
                 const preview = block.data.substring(0, 20) + '...';
                 console.log(`[thumbnail:${toolCallId}] Received ${block.mimeType} (${sizeKB}KB, data="${preview}")`);
                 
+                // Display inline image in iTerm2 if enabled
+                if (useItermImages && block.data) {
+                  try {
+                    // Extract name from metadata or use toolCallId
+                    const metadata = thumbnails.get(toolCallId)?.metadata;
+                    const name = metadata?.split(' ')[0] || `${toolCallId}.png`;
+                    
+                    itermShowImage(block.data, {
+                      name,
+                      width: '64ch',
+                      height: 'auto',
+                      preserveAspectRatio: true
+                    });
+                    
+                    console.log(`[iTerm2] Displayed inline: ${name}`);
+                  } catch (err: any) {
+                    console.log(`[iTerm2] Failed to display: ${err.message}`);
+                  }
+                }
+                
                 // Log truncated version for NDJSON
                 logger.line('info', { 
                   tool_call_thumbnail: toolCallId,
                   mimeType: block.mimeType,
                   sizeKB,
-                  dataPreview: preview
+                  dataPreview: preview,
+                  itermRendered: useItermImages
                 });
               }
             }
@@ -162,6 +196,9 @@ async function main() {
       console.log('  :cancel          - Cancel the current prompt');
       console.log('  :gallery         - Show thumbnail gallery');
       console.log('  :exit            - Exit the client');
+      console.log('');
+      console.log('Options:');
+      console.log('  --tty-images=auto|iterm|off - Control inline image display (default: auto)');
       console.log('');
 
       const rl = readline.createInterface({
