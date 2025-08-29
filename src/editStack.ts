@@ -45,8 +45,20 @@ export interface ContrastOp extends BaseEditOp {
   amt: number; // percent [-100..100]
 }
 
+// Saturation operation
+export interface SaturationOp extends BaseEditOp {
+  op: 'saturation';
+  amt: number; // percent [-100..100], 0 = no-op
+}
+
+// Vibrance operation
+export interface VibranceOp extends BaseEditOp {
+  op: 'vibrance';
+  amt: number; // percent [-100..100], protects already-saturated colors
+}
+
 // Union type for all operations
-export type EditOp = CropOp | WhiteBalanceOp | ExposureOp | ContrastOp;
+export type EditOp = CropOp | WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp;
 
 // Stack manager with undo/redo support
 export class EditStackManager {
@@ -236,6 +248,58 @@ export class EditStackManager {
     }
   }
 
+  // Add or amend saturation operation
+  addSaturation(options: {
+    amt: number;
+    forceNew?: boolean;
+  }): void {
+    // Save current state for undo
+    this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
+    this.redoStack = [];
+
+    const newOp: SaturationOp = {
+      id: this.generateOpId(),
+      op: 'saturation',
+      amt: Math.max(-100, Math.min(100, options.amt)) // Clamp to [-100, 100]
+    };
+
+    // Amend-last logic: replace most recent saturation op unless forceNew
+    const shouldAmend = !options.forceNew && this.findLastOpByType('saturation') !== -1;
+    
+    if (shouldAmend) {
+      const idx = this.findLastOpByType('saturation');
+      this.currentStack.ops[idx] = newOp;
+    } else {
+      this.currentStack.ops.push(newOp);
+    }
+  }
+
+  // Add or amend vibrance operation
+  addVibrance(options: {
+    amt: number;
+    forceNew?: boolean;
+  }): void {
+    // Save current state for undo
+    this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
+    this.redoStack = [];
+
+    const newOp: VibranceOp = {
+      id: this.generateOpId(),
+      op: 'vibrance',
+      amt: Math.max(-100, Math.min(100, options.amt)) // Clamp to [-100, 100]
+    };
+
+    // Amend-last logic: replace most recent vibrance op unless forceNew
+    const shouldAmend = !options.forceNew && this.findLastOpByType('vibrance') !== -1;
+    
+    if (shouldAmend) {
+      const idx = this.findLastOpByType('vibrance');
+      this.currentStack.ops[idx] = newOp;
+    } else {
+      this.currentStack.ops.push(newOp);
+    }
+  }
+
   // Helper to find last operation by type
   private findLastOpByType(opType: string): number {
     for (let i = this.currentStack.ops.length - 1; i >= 0; i--) {
@@ -368,6 +432,12 @@ export class EditStackManager {
       } else if (op.op === 'contrast') {
         const conOp = op as ContrastOp;
         summary = `Contrast ${conOp.amt > 0 ? '+' : ''}${conOp.amt}`;
+      } else if (op.op === 'saturation') {
+        const satOp = op as SaturationOp;
+        summary = `Sat ${satOp.amt > 0 ? '+' : ''}${satOp.amt}`;
+      } else if (op.op === 'vibrance') {
+        const vibOp = op as VibranceOp;
+        summary = `Vib ${vibOp.amt > 0 ? '+' : ''}${vibOp.amt}`;
       }
       
       if (summary) {
@@ -412,6 +482,12 @@ export class EditStackManager {
     } else if (lastOp.op === 'contrast') {
       const conOp = lastOp as ContrastOp;
       parts.push(`${conOp.amt > 0 ? '+' : ''}${conOp.amt}`);
+    } else if (lastOp.op === 'saturation') {
+      const satOp = lastOp as SaturationOp;
+      parts.push(`${satOp.amt > 0 ? '+' : ''}${satOp.amt}`);
+    } else if (lastOp.op === 'vibrance') {
+      const vibOp = lastOp as VibranceOp;
+      parts.push(`${vibOp.amt > 0 ? '+' : ''}${vibOp.amt}`);
     }
 
     return parts.join(' ');

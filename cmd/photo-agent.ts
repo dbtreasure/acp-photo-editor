@@ -131,9 +131,10 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       return;
     }
     
-    // Check for edit commands (crop, undo, redo, reset, white balance, exposure, contrast)
+    // Check for edit commands (crop, undo, redo, reset, white balance, exposure, contrast, saturation, vibrance, auto, hist)
     if (text.startsWith(':crop') || text === ':undo' || text === ':redo' || text === ':reset' ||
-        text.startsWith(':wb') || text.startsWith(':exposure') || text.startsWith(':contrast')) {
+        text.startsWith(':wb') || text.startsWith(':exposure') || text.startsWith(':contrast') ||
+        text.startsWith(':saturation') || text.startsWith(':vibrance') || text.startsWith(':auto') || text === ':hist') {
       handleEditCommand(text, currentSessionId).then(
         () => {
           if (!cancelled) {
@@ -389,6 +390,8 @@ function notify(method:string, params:any) {
 }
 
 async function handleEditCommand(command: string, sessionId: string): Promise<void> {
+  logger.line('info', { handleEditCommand_called: true, command });
+  
   // Check if we have an image loaded
   if (!lastLoadedImage) {
     throw new Error('No image loaded. Please load an image first.');
@@ -549,6 +552,135 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     
     // Add contrast operation to stack
     stackManager.addContrast(conOptions);
+  } else if (command.startsWith(':saturation')) {
+    // Parse saturation arguments
+    const args = command.substring(11).trim();
+    const satOptions: any = {};
+    
+    // Parse --amt
+    const amtMatch = args.match(/--amt\s+([-\d]+)/);
+    if (amtMatch) {
+      satOptions.amt = parseInt(amtMatch[1]);
+    } else {
+      throw new Error('Saturation requires --amt value');
+    }
+    
+    // Parse --new-op flag
+    satOptions.forceNew = args.includes('--new-op');
+    
+    // Add saturation operation to stack
+    stackManager.addSaturation(satOptions);
+  } else if (command.startsWith(':vibrance')) {
+    // Parse vibrance arguments
+    const args = command.substring(9).trim();
+    const vibOptions: any = {};
+    
+    // Parse --amt
+    const amtMatch = args.match(/--amt\s+([-\d]+)/);
+    if (amtMatch) {
+      vibOptions.amt = parseInt(amtMatch[1]);
+    } else {
+      throw new Error('Vibrance requires --amt value');
+    }
+    
+    // Parse --new-op flag
+    vibOptions.forceNew = args.includes('--new-op');
+    
+    // Add vibrance operation to stack
+    stackManager.addVibrance(vibOptions);
+  } else if (command.startsWith(':auto')) {
+    // Parse auto adjustment arguments
+    const args = command.substring(5).trim();
+    
+    // Import auto adjust functions
+    const { autoWhiteBalance, autoExposure, autoContrast, autoAll } = await import('../src/autoAdjust.js');
+    
+    if (args === 'wb') {
+      // Auto white balance
+      const wbOp = await autoWhiteBalance(lastLoadedImage.replace('file://', ''));
+      stackManager.addWhiteBalance({
+        method: wbOp.method,
+        temp: wbOp.temp,
+        tint: wbOp.tint,
+        forceNew: false
+      });
+    } else if (args === 'ev') {
+      // Auto exposure
+      const currentStack = stackManager.getStack();
+      const wbOp = currentStack.ops.find(op => op.op === 'white_balance') as any;
+      const evOp = await autoExposure(lastLoadedImage.replace('file://', ''), wbOp);
+      stackManager.addExposure({
+        ev: evOp.ev,
+        forceNew: false
+      });
+    } else if (args === 'contrast') {
+      // Auto contrast
+      const currentStack = stackManager.getStack();
+      const wbOp = currentStack.ops.find(op => op.op === 'white_balance') as any;
+      const evOp = currentStack.ops.find(op => op.op === 'exposure') as any;
+      const contrastOp = await autoContrast(lastLoadedImage.replace('file://', ''), wbOp, evOp);
+      stackManager.addContrast({
+        amt: contrastOp.amt,
+        forceNew: false
+      });
+    } else if (args === 'all') {
+      // Auto all adjustments
+      const adjustments = await autoAll(lastLoadedImage.replace('file://', ''));
+      
+      // Apply white balance
+      stackManager.addWhiteBalance({
+        method: adjustments.whiteBalance.method,
+        temp: adjustments.whiteBalance.temp,
+        tint: adjustments.whiteBalance.tint,
+        forceNew: false
+      });
+      
+      // Apply exposure
+      stackManager.addExposure({
+        ev: adjustments.exposure.ev,
+        forceNew: false
+      });
+      
+      // Apply contrast
+      stackManager.addContrast({
+        amt: adjustments.contrast.amt,
+        forceNew: false
+      });
+    } else {
+      throw new Error('Auto requires: wb, ev, contrast, or all');
+    }
+  } else if (command === ':hist') {
+    // Compute and display histogram
+    logger.line('info', { hist_command_recognized: true });
+    const editStack = stackManager.getStack();
+    
+    // Call compute_histogram tool
+    const histResult = await client.callTool({
+      name: 'compute_histogram',
+      arguments: {
+        uri: lastLoadedImage,
+        editStack,
+        bins: 64
+      }
+    });
+    
+    // Parse histogram data
+    const content = histResult.content as any[] | undefined;
+    const histDataText = content?.[0]?.text || '{}';
+    const histData = JSON.parse(histDataText);
+    
+    // Format and display histogram
+    const { formatHistogramDisplay } = await import('../src/histogram.js');
+    const histDisplay = formatHistogramDisplay(histData);
+    
+    // Send histogram display as text
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: histDisplay }
+    });
+    
+    return; // Don't render preview for histogram command
   } else {
     throw new Error(`Unknown command: ${command}`);
   }

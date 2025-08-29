@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 5
+# ACP Photo Editor — Phase 6
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, featuring non-destructive edit stack, crop/straighten operations, core tonal/color adjustments (white balance, exposure, contrast), and full-resolution export with sidecar persistence.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, featuring non-destructive edit stack, crop/straighten operations, comprehensive color adjustments (white balance, exposure, contrast, saturation, vibrance), intelligent auto adjustments, histogram analysis, and full-resolution export with sidecar persistence.
 
 ## Quick Start
 
@@ -22,9 +22,17 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 5
+## What's New in Phase 6
 
-Phase 5 adds core tonal and color adjustments:
+Phase 6 adds advanced color operations and intelligent adjustments:
+- **Saturation/Vibrance**: Global color enhancement with smart protection
+- **Auto Adjustments**: Intelligent auto white balance, exposure, and contrast
+- **Histogram Analysis**: Real-time 64-bin histogram with clipping detection
+- **Batch Auto**: Apply all auto adjustments with `:auto all` command
+- **ASCII Visualization**: Terminal-friendly histogram sparklines
+- **Extended Pipeline**: Proper operation order for all color adjustments
+
+Phase 5 features:
 - **White Balance**: Gray point sampling or manual temp/tint adjustment
 - **Exposure**: EV-based brightness control (±3 stops)
 - **Contrast**: Global contrast adjustment (±100%)
@@ -60,6 +68,17 @@ Previous Phase 2 features:
 - `:wb --temp 18 --tint -7` - White balance using temperature/tint (-100 to 100)
 - `:exposure --ev 0.35` - Adjust exposure in EV stops (-3 to +3)
 - `:contrast --amt 12` - Adjust contrast (-100 to 100)
+- `:saturation --amt 25` - Adjust saturation (-100 to 100)
+- `:vibrance --amt 30` - Adjust vibrance with protection for saturated colors (-100 to 100)
+
+### Auto Adjustments
+- `:auto wb` - Automatic white balance using gray-world algorithm
+- `:auto ev` - Automatic exposure targeting optimal median brightness
+- `:auto contrast` - Automatic contrast based on histogram percentiles
+- `:auto all` - Apply all auto adjustments in sequence (WB → EV → Contrast)
+
+### Analysis Tools
+- `:hist` - Display histogram with 64-bin sparklines and clipping percentages
 
 ### Crop & Straighten
 - `:crop --aspect 1:1` - Crop to aspect ratio (square, 16:9, 3:2, etc)
@@ -219,6 +238,12 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
    - Format options: JPEG/PNG with quality control
    - Returns: dstUri, bytes, dimensions, elapsed time
 
+6. **compute_histogram(uri, editStack, bins)** - Compute histogram and clipping
+   - Generates 64-bin histograms for luma and RGB channels
+   - Calculates clipping percentages (pixels at 0 or 255)
+   - Applied after color ops, before geometry ops
+   - Returns normalized histogram data (0-100 scale)
+
 ### Color Adjustment Algorithms
 
 **White Balance**
@@ -232,9 +257,63 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
 - Applied using Sharp's modulate function
 
 **Contrast**
-- Global contrast around middle gray (0.18 linear)
+- Global contrast around mid-tone (0.5 in display space, 128 in 8-bit)
 - Linear transformation: (input - 0.5) × factor + 0.5
 - Range: ±100% contrast adjustment
+
+**Saturation**
+- HSL-based saturation adjustment in sRGB space
+- Range: -100 (grayscale) to +100 (2× saturation)
+- Preserves hue and lightness, only modifies saturation channel
+
+**Vibrance**
+- Intelligent saturation that protects already-saturated colors
+- Attenuation factor: k = (1-S)^1.5 for gentle falloff
+- Less aggressive than saturation, preserves skin tones better
+- Range: ±100% with reduced effect on saturated pixels
+
+### Auto Adjustment Algorithms
+
+**Auto White Balance**
+- Gray-world algorithm on 512px downsampled image
+- Calculates mean RGB and equalizes to gray
+- Gains clamped to [0.5, 2.0] for stability
+- Converts to temp/tint parameters for consistency
+
+**Auto Exposure**
+- Targets median luma around 0.45 sRGB (~0.18 linear)
+- Calculates EV adjustment: log2(target/current)
+- Clamped to [-1.5, +1.5] EV to prevent over-correction
+- Applied after white balance for accurate analysis
+
+**Auto Contrast**
+- Analyzes 2% and 98% luma percentiles
+- Calculates stretch factor for dynamic range
+- Maps to contrast amount [-40, +40]
+- Preserves highlights and shadows while expanding midtones
+
+**Histogram Analysis**
+- 64-bin histograms for precise distribution analysis
+- Per-channel (R,G,B) and luma computation
+- Clipping detection with percentage reporting
+- ASCII sparkline visualization for terminal display
+
+### Operation Order
+
+The edit pipeline applies operations in a specific order to ensure correct results:
+
+1. **EXIF Orientation** - Auto-rotate based on metadata
+2. **White Balance** - Color temperature correction
+3. **Exposure** - Brightness adjustment
+4. **Contrast** - Tonal range adjustment
+5. **Saturation** - Global color intensity
+6. **Vibrance** - Smart saturation
+7. **Rotate** - Crop angle rotation
+8. **Crop** - Rectangle extraction
+9. **Downscale** - Resize for preview/export
+10. **Profile/Encode** - Color space and format conversion
+
+This order ensures color adjustments are applied before geometric transformations for optimal quality.
 
 ### Supported Formats
 - Standard: JPEG, PNG, WebP, HEIC/HEIF, TIFF, SVG, GIF

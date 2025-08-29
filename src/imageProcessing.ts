@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { WhiteBalanceOp, ExposureOp, ContrastOp } from './editStack.js';
+import { WhiteBalanceOp, ExposureOp, ContrastOp, SaturationOp, VibranceOp } from './editStack.js';
 
 // Type definitions for Sharp matrices
 type Matrix3x3 = [[number, number, number], [number, number, number], [number, number, number]];
@@ -160,15 +160,60 @@ export function applyContrast(
   return pipeline.linear(a, b);
 }
 
+// Apply saturation adjustment
+export function applySaturation(
+  pipeline: sharp.Sharp,
+  op: SaturationOp
+): sharp.Sharp {
+  const amt = op.amt; // [-100, 100] percent
+  
+  // Convert to saturation multiplier
+  // -100 = fully desaturated (grayscale), 0 = no change, 100 = double saturation
+  const saturationFactor = 1 + (amt / 100); // [0, 2]
+  
+  // Sharp's modulate function can adjust saturation directly
+  return pipeline.modulate({
+    brightness: 1.0,         // Keep brightness unchanged
+    saturation: saturationFactor,
+    hue: 0                   // Keep hue unchanged
+  });
+}
+
+// Apply vibrance adjustment (soft saturation)
+export async function applyVibrance(
+  pipeline: sharp.Sharp,
+  op: VibranceOp
+): Promise<sharp.Sharp> {
+  const amt = op.amt; // [-100, 100] percent
+  
+  // Vibrance is a more sophisticated saturation that protects already-saturated colors
+  // and optionally skin tones. Since Sharp doesn't have native vibrance support,
+  // we'll approximate it using a modified saturation approach.
+  
+  // For now, we'll use a simpler approach that reduces the effect on highly saturated areas
+  // In a full implementation, we'd need to process the raw pixels for proper HSL conversion
+  
+  // Use a reduced saturation factor for vibrance (gentler than regular saturation)
+  const vibranceFactor = 1 + (amt / 100) * 0.7; // Reduced effect compared to saturation
+  
+  // Apply the vibrance adjustment using modulate
+  // This is a simplified version - a full implementation would need pixel-level processing
+  return pipeline.modulate({
+    brightness: 1.0,
+    saturation: vibranceFactor,
+    hue: 0
+  });
+}
+
 // Main function to apply all color operations to a pipeline
 export async function applyColorOperations(
   pipeline: sharp.Sharp,
-  ops: Array<WhiteBalanceOp | ExposureOp | ContrastOp>,
+  ops: Array<WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp>,
   originalMetadata: sharp.Metadata
 ): Promise<sharp.Sharp> {
   let result = pipeline;
   
-  // Apply operations in order: white balance → exposure → contrast
+  // Apply operations in order: white balance → exposure → contrast → saturation → vibrance
   for (const op of ops) {
     if (op.op === 'white_balance') {
       if (op.method === 'gray_point') {
@@ -180,6 +225,10 @@ export async function applyColorOperations(
       result = applyExposure(result, op as ExposureOp);
     } else if (op.op === 'contrast') {
       result = applyContrast(result, op as ContrastOp);
+    } else if (op.op === 'saturation') {
+      result = applySaturation(result, op as SaturationOp);
+    } else if (op.op === 'vibrance') {
+      result = await applyVibrance(result, op as VibranceOp);
     }
   }
   

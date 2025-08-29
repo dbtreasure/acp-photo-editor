@@ -15,8 +15,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
-import { EditStack, EditOp, CropOp, WhiteBalanceOp, ExposureOp, ContrastOp } from '../src/editStack.js';
+import { EditStack, EditOp, CropOp, WhiteBalanceOp, ExposureOp, ContrastOp, SaturationOp, VibranceOp } from '../src/editStack.js';
 import { applyColorOperations } from '../src/imageProcessing.js';
+import { computeHistogram } from '../src/histogram.js';
 import { randomBytes } from 'crypto';
 import { rename } from 'fs/promises';
 
@@ -62,6 +63,18 @@ const EditOpSchema = z.discriminatedUnion('op', [
     id: z.string(),
     op: z.literal('contrast'),
     amt: z.number().min(-100).max(100)
+  }),
+  // Saturation operation
+  z.object({
+    id: z.string(),
+    op: z.literal('saturation'),
+    amt: z.number().min(-100).max(100)
+  }),
+  // Vibrance operation
+  z.object({
+    id: z.string(),
+    op: z.literal('vibrance'),
+    amt: z.number().min(-100).max(100)
   })
 ]);
 
@@ -95,6 +108,16 @@ const CommitVersionArgsSchema = z.object({
   stripExif: z.boolean().optional().default(true),
   colorProfile: z.enum(['srgb', 'displayp3']).optional().default('srgb'),
   overwrite: z.boolean().optional().default(false)
+});
+
+const ComputeHistogramArgsSchema = z.object({
+  uri: z.url(),
+  editStack: z.object({
+    version: z.literal(1),
+    baseUri: z.string(),
+    ops: z.array(EditOpSchema)
+  }),
+  bins: z.number().int().positive().optional().default(64)
 });
 
 const SUPPORTED_MIMES = new Set([
@@ -381,6 +404,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ['uri', 'editStack', 'dstUri']
+        }
+      },
+      {
+        name: 'compute_histogram',
+        description: 'Compute histogram and clipping statistics for an image with edit stack applied',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            uri: {
+              type: 'string',
+              description: 'file:// URI to the image'
+            },
+            editStack: {
+              type: 'object',
+              description: 'Edit stack to apply before computing histogram',
+              properties: {
+                version: { type: 'number' },
+                baseUri: { type: 'string' },
+                ops: { type: 'array' }
+              },
+              required: ['version', 'baseUri', 'ops']
+            },
+            bins: {
+              type: 'number',
+              description: 'Number of histogram bins',
+              default: 64
+            }
+          },
+          required: ['uri', 'editStack']
         }
       }
     ]
@@ -906,6 +958,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to commit version: ${error.message}`
+      );
+    }
+  }
+  
+  if (name === 'compute_histogram') {
+    const { uri, editStack, bins } = ComputeHistogramArgsSchema.parse(args);
+    
+    if (!uri.startsWith('file://')) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Only file:// URIs are supported'
+      );
+    }
+    
+    const filePath = fileURLToPath(uri);
+    validatePath(filePath);
+    
+    const stats = await fs.stat(filePath);
+    if (stats.size > MAX_FILE_SIZE) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`
+      );
+    }
+    
+    const mimeType = await getMimeType(filePath);
+    if (!SUPPORTED_MIMES.has(mimeType)) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Unsupported mime type: ${mimeType}`
+      );
+    }
+    
+    try {
+      // Compute histogram with the edit stack applied
+      const histogramData = await computeHistogram(filePath, editStack as EditStack, bins);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(histogramData)
+          }
+        ]
+      };
+    } catch (error: any) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to compute histogram: ${error.message}`
       );
     }
   }

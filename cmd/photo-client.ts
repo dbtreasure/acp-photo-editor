@@ -204,6 +204,18 @@ async function main() {
       console.log('  :contrast        - Adjust contrast');
       console.log('    --amt n        - Contrast amount (-100 to 100)');
       console.log('    --new-op       - Force new operation (don\'t amend last)');
+      console.log('  :saturation      - Adjust saturation');
+      console.log('    --amt n        - Saturation amount (-100 to 100)');
+      console.log('    --new-op       - Force new operation (don\'t amend last)');
+      console.log('  :vibrance        - Adjust vibrance (soft saturation)');
+      console.log('    --amt n        - Vibrance amount (-100 to 100)');
+      console.log('    --new-op       - Force new operation (don\'t amend last)');
+      console.log('  :auto <type>     - Auto adjustments');
+      console.log('    wb             - Auto white balance');
+      console.log('    ev             - Auto exposure');
+      console.log('    contrast       - Auto contrast');
+      console.log('    all            - Apply all auto adjustments');
+      console.log('  :hist            - Show histogram and clipping info');
       console.log('  :crop [options]  - Apply crop/straighten to current image');
       console.log('    --aspect 1:1   - Crop to aspect ratio (1:1, 16:9, 3:2, etc)');
       console.log('    --rect x,y,w,h - Crop to normalized rectangle [0-1]');
@@ -295,7 +307,8 @@ async function main() {
             isPrompting = false;
           }
         } else if (cmd.startsWith(':crop') || cmd === ':undo' || cmd === ':redo' || cmd === ':reset' ||
-                   cmd.startsWith(':wb') || cmd.startsWith(':exposure') || cmd.startsWith(':contrast')) {
+                   cmd.startsWith(':wb') || cmd.startsWith(':exposure') || cmd.startsWith(':contrast') ||
+                   cmd.startsWith(':saturation') || cmd.startsWith(':vibrance') || cmd.startsWith(':auto') || cmd === ':hist') {
           // Handle edit commands
           if (isPrompting) {
             console.log('A prompt is already in progress. Use :cancel to cancel it.');
