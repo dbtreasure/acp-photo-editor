@@ -46,14 +46,38 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       return;
     }
     cancelled = false;
-    const text = (params.prompt && params.prompt[0] && params.prompt[0].text) || '';
+    
+    // Check for resource_links in the prompt
+    const prompt = params.prompt || [];
+    const resourceLinks = prompt.filter((block: any) => block.type === 'resource_link');
+    const textBlocks = prompt.filter((block: any) => block.type === 'text');
+    const text = textBlocks.length > 0 ? textBlocks[0].text : '';
+    
+    // Log each resource_link
+    resourceLinks.forEach((link: any) => {
+      logger.line('info', { resource_link: link });
+    });
+    
     // Simulate small delay then stream one chunk
     setTimeout(() => {
       if (!cancelled) {
+        let responseText: string;
+        
+        if (resourceLinks.length > 0) {
+          // Acknowledge resources
+          const firstBasename = resourceLinks[0].name || 'unknown';
+          const moreText = resourceLinks.length > 1 ? ', ...' : '';
+          responseText = `ack: ${resourceLinks.length} resources (${firstBasename}${moreText})`;
+        } else if (text === 'ping') {
+          responseText = 'pong';
+        } else {
+          responseText = `echo:${text}`;
+        }
+        
         notify('session/update', {
           sessionId: currentSessionId,
           sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: text === 'ping' ? 'pong' : `echo:${text}` }
+          content: { type: 'text', text: responseText }
         });
       }
       // Then respond with stopReason

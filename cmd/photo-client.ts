@@ -5,6 +5,8 @@ import path from 'path';
 import readline from 'readline';
 import { JsonRpcPeer } from '../src/common/jsonrpc';
 import { NdjsonLogger } from '../src/common/logger';
+import { guessMimeType } from '../src/common/mime';
+import { PromptContent, ContentBlockResourceLink } from '../src/acp/types';
 
 const args = minimist(process.argv.slice(2), {
   string: ['agent', 'agentArgs', 'cwd', 'demo'],
@@ -90,9 +92,10 @@ async function main() {
     if (args.interactive) {
       console.log('\nPhoto Editor ACP Client - Interactive Mode');
       console.log('Commands:');
-      console.log('  :ping    - Send a ping message to the agent');
-      console.log('  :cancel  - Cancel the current prompt');
-      console.log('  :exit    - Exit the client');
+      console.log('  :ping            - Send a ping message to the agent');
+      console.log('  :open <path...>  - Open image file(s)');
+      console.log('  :cancel          - Cancel the current prompt');
+      console.log('  :exit            - Exit the client');
       console.log('');
 
       const rl = readline.createInterface({
@@ -129,6 +132,74 @@ async function main() {
               console.error('[error]', e?.message || String(e));
             }
             isPrompting = false;
+          }
+        } else if (cmd.startsWith(':open ')) {
+          if (isPrompting) {
+            console.log('A prompt is already in progress. Use :cancel to cancel it.');
+          } else {
+            const parts = cmd.substring(6).trim().split(/\s+/);
+            if (parts.length === 0 || parts[0] === '') {
+              console.log('Usage: :open <path1> [path2...]');
+            } else {
+              isPrompting = true;
+              console.log('Opening resources...');
+              
+              // Build prompt with text and resource_links
+              const prompt: PromptContent[] = [
+                { type: 'text', text: 'open assets' }
+              ];
+              
+              // Convert paths to absolute file:// URIs
+              const resources: ContentBlockResourceLink[] = parts.map(p => {
+                const absPath = path.resolve(p);
+                const basename = path.basename(absPath);
+                const uri = `file://${absPath}`;
+                const mimeType = guessMimeType(basename);
+                
+                return {
+                  type: 'resource_link' as const,
+                  uri,
+                  name: basename,
+                  ...(mimeType && { mimeType })
+                };
+              });
+              
+              prompt.push(...resources);
+              
+              // Display table
+              console.log('\nResources:');
+              console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
+              console.log('----\t\t---\t\t\t\t----\t\t------');
+              resources.forEach(r => {
+                const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
+                console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tSENDING`);
+              });
+              
+              // Log the prompt summary
+              logger.line('info', {
+                prompt_summary: `${resources.length} resources: ${resources.map(r => r.name).join(', ')}`
+              });
+              
+              try {
+                const pRes = await peer.request('session/prompt', {
+                  sessionId,
+                  prompt
+                });
+                console.log(`\n[result] stopReason: ${pRes.stopReason}`);
+                
+                // Update table with ACKED status
+                console.log('\nResources (updated):');
+                console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
+                console.log('----\t\t---\t\t\t\t----\t\t------');
+                resources.forEach(r => {
+                  const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
+                  console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tACKED`);
+                });
+              } catch (e: any) {
+                console.error('[error]', e?.message || String(e));
+              }
+              isPrompting = false;
+            }
           }
         } else if (cmd === ':cancel') {
           if (!isPrompting) {

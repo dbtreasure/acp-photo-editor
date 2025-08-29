@@ -10,6 +10,7 @@ const path_1 = __importDefault(require("path"));
 const readline_1 = __importDefault(require("readline"));
 const jsonrpc_1 = require("../src/common/jsonrpc");
 const logger_1 = require("../src/common/logger");
+const mime_1 = require("../src/common/mime");
 const args = (0, minimist_1.default)(process.argv.slice(2), {
     string: ['agent', 'agentArgs', 'cwd', 'demo'],
     boolean: ['interactive'],
@@ -82,9 +83,10 @@ async function main() {
         if (args.interactive) {
             console.log('\nPhoto Editor ACP Client - Interactive Mode');
             console.log('Commands:');
-            console.log('  :ping    - Send a ping message to the agent');
-            console.log('  :cancel  - Cancel the current prompt');
-            console.log('  :exit    - Exit the client');
+            console.log('  :ping            - Send a ping message to the agent');
+            console.log('  :open <path...>  - Open image file(s)');
+            console.log('  :cancel          - Cancel the current prompt');
+            console.log('  :exit            - Exit the client');
             console.log('');
             const rl = readline_1.default.createInterface({
                 input: process.stdin,
@@ -119,6 +121,70 @@ async function main() {
                             console.error('[error]', e?.message || String(e));
                         }
                         isPrompting = false;
+                    }
+                }
+                else if (cmd.startsWith(':open ')) {
+                    if (isPrompting) {
+                        console.log('A prompt is already in progress. Use :cancel to cancel it.');
+                    }
+                    else {
+                        const parts = cmd.substring(6).trim().split(/\s+/);
+                        if (parts.length === 0 || parts[0] === '') {
+                            console.log('Usage: :open <path1> [path2...]');
+                        }
+                        else {
+                            isPrompting = true;
+                            console.log('Opening resources...');
+                            // Build prompt with text and resource_links
+                            const prompt = [
+                                { type: 'text', text: 'open assets' }
+                            ];
+                            // Convert paths to absolute file:// URIs
+                            const resources = parts.map(p => {
+                                const absPath = path_1.default.resolve(p);
+                                const basename = path_1.default.basename(absPath);
+                                const uri = `file://${absPath}`;
+                                const mimeType = (0, mime_1.guessMimeType)(basename);
+                                return {
+                                    type: 'resource_link',
+                                    uri,
+                                    name: basename,
+                                    ...(mimeType && { mimeType })
+                                };
+                            });
+                            prompt.push(...resources);
+                            // Display table
+                            console.log('\nResources:');
+                            console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
+                            console.log('----\t\t---\t\t\t\t----\t\t------');
+                            resources.forEach(r => {
+                                const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
+                                console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tSENDING`);
+                            });
+                            // Log the prompt summary
+                            logger.line('info', {
+                                prompt_summary: `${resources.length} resources: ${resources.map(r => r.name).join(', ')}`
+                            });
+                            try {
+                                const pRes = await peer.request('session/prompt', {
+                                    sessionId,
+                                    prompt
+                                });
+                                console.log(`\n[result] stopReason: ${pRes.stopReason}`);
+                                // Update table with ACKED status
+                                console.log('\nResources (updated):');
+                                console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
+                                console.log('----\t\t---\t\t\t\t----\t\t------');
+                                resources.forEach(r => {
+                                    const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
+                                    console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tACKED`);
+                                });
+                            }
+                            catch (e) {
+                                console.error('[error]', e?.message || String(e));
+                            }
+                            isPrompting = false;
+                        }
                     }
                 }
                 else if (cmd === ':cancel') {

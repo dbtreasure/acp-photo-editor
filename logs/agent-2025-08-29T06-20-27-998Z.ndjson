@@ -1,0 +1,9 @@
+{"t":"2025-08-29T06:20:28.000Z","dir":"recv","data":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false}}}}}
+{"t":"2025-08-29T06:20:28.000Z","dir":"send","data":{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[]}}}
+{"t":"2025-08-29T06:20:28.001Z","dir":"recv","data":{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/Users/dan/Development/acp-photo-editor","mcpServers":[]}}}
+{"t":"2025-08-29T06:20:28.002Z","dir":"send","data":{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_l1iv7yae"}}}
+{"t":"2025-08-29T06:20:28.940Z","dir":"recv","data":{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"sess_l1iv7yae","prompt":[{"type":"text","text":"open assets"},{"type":"resource_link","uri":"file:///fake/path/peppers.jpg","name":"peppers.jpg","mimeType":"image/jpeg"},{"type":"resource_link","uri":"file:///fake/path/photo.raf","name":"photo.raf","mimeType":"image/x-raw"}]}}}
+{"t":"2025-08-29T06:20:28.940Z","dir":"info","data":{"resource_link":{"type":"resource_link","uri":"file:///fake/path/peppers.jpg","name":"peppers.jpg","mimeType":"image/jpeg"}}}
+{"t":"2025-08-29T06:20:28.941Z","dir":"info","data":{"resource_link":{"type":"resource_link","uri":"file:///fake/path/photo.raf","name":"photo.raf","mimeType":"image/x-raw"}}}
+{"t":"2025-08-29T06:20:28.972Z","dir":"send","data":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_l1iv7yae","sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ack: 2 resources (peppers.jpg, ...)"}}}}
+{"t":"2025-08-29T06:20:28.972Z","dir":"send","data":{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}}

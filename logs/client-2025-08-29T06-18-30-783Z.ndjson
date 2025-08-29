@@ -1,0 +1,6 @@
+{"t":"2025-08-29T06:18:30.786Z","dir":"send","data":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false}}}}}
+{"t":"2025-08-29T06:18:30.818Z","dir":"recv","data":{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[]}}}
+{"t":"2025-08-29T06:18:30.818Z","dir":"send","data":{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/Users/dan/Development/acp-photo-editor","mcpServers":[]}}}
+{"t":"2025-08-29T06:18:30.818Z","dir":"recv","data":{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_cycx0kq3"}}}
+{"t":"2025-08-29T06:18:30.818Z","dir":"send","data":{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"sess_cycx0kq3","prompt":[{"type":"text","text":"ping"}]}}}
+{"t":"2025-08-29T06:18:30.850Z","dir":"recv","data":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_cycx0kq3","sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"pong"}}}}
