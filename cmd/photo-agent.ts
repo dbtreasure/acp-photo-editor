@@ -31,6 +31,9 @@ let mcpClients: Map<string, Client> = new Map();
 const imageStacks = new Map<string, EditStackManager>();
 let lastLoadedImage: string | null = null;
 
+// Cache image metadata to avoid repeated tool calls
+const imageMetadataCache = new Map<string, { width: number; height: number; mimeType?: string }>();
+
 // Planner configuration (from session/new)
 let plannerMode: 'mock' | 'gemini' | 'off' = 'mock';
 let plannerConfig: {
@@ -448,8 +451,13 @@ function notify(method:string, params:any) {
   send(msg);
 }
 
-// Helper to get image metadata
+// Helper to get image metadata with caching
 async function getImageMetadata(uri: string, client: Client): Promise<{ width: number; height: number; mimeType?: string }> {
+  // Check cache first
+  if (imageMetadataCache.has(uri)) {
+    return imageMetadataCache.get(uri)!;
+  }
+  
   try {
     const result = await client.callTool({
       name: 'read_image_meta',
@@ -459,18 +467,24 @@ async function getImageMetadata(uri: string, client: Client): Promise<{ width: n
     const content = result.content as any;
     if (content?.[0]?.type === 'text') {
       const meta = JSON.parse(content[0].text);
-      return {
+      const metadata = {
         width: meta.width || 0,
         height: meta.height || 0,
         mimeType: meta.format ? `image/${meta.format.toLowerCase()}` : undefined
       };
+      
+      // Cache the result
+      imageMetadataCache.set(uri, metadata);
+      return metadata;
     }
   } catch (error) {
     logger.line('error', { get_image_metadata_failed: error });
   }
   
   // Return defaults if metadata fetch fails
-  return { width: 0, height: 0, mimeType: 'image/jpeg' };
+  const defaults = { width: 0, height: 0, mimeType: 'image/jpeg' };
+  imageMetadataCache.set(uri, defaults);
+  return defaults;
 }
 
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
@@ -1599,3 +1613,36 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
 }
 
 // Transport manages process lifecycle - no manual cleanup needed
+
+// Cleanup handlers for graceful shutdown
+process.on('SIGINT', async () => {
+  logger.line('info', { event: 'shutdown', signal: 'SIGINT' });
+  
+  // Close all MCP clients
+  for (const [name, client] of mcpClients) {
+    try {
+      await client.close();
+      logger.line('info', { event: 'mcp_client_closed', name });
+    } catch (e) {
+      logger.line('error', { event: 'mcp_client_close_failed', name, error: e });
+    }
+  }
+  
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  logger.line('info', { event: 'shutdown', signal: 'SIGTERM' });
+  
+  // Close all MCP clients
+  for (const [name, client] of mcpClients) {
+    try {
+      await client.close();
+      logger.line('info', { event: 'mcp_client_closed', name });
+    } catch (e) {
+      logger.line('error', { event: 'mcp_client_close_failed', name, error: e });
+    }
+  }
+  
+  process.exit(0);
+});

@@ -320,9 +320,15 @@ export function validateAndClampCall(call: any): PlannedCall | null {
           }
           if (call.args.format === 'jpeg' || call.args.format === 'png') {
             exportArgs.format = call.args.format;
+          } else if (call.args.format && call.args.format !== 'jpeg' && call.args.format !== 'png') {
+            // Invalid format
+            return null;
           }
           if (typeof call.args.quality === 'number') {
             exportArgs.quality = clamp(call.args.quality, PLANNER_CLAMPS.quality.min, PLANNER_CLAMPS.quality.max);
+          } else if (call.args.quality !== undefined && typeof call.args.quality !== 'number') {
+            // Invalid quality type
+            return null;
           }
           if (typeof call.args.overwrite === 'boolean') {
             exportArgs.overwrite = call.args.overwrite;

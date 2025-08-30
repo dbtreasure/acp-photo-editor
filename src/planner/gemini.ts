@@ -93,21 +93,77 @@ export class GeminiPlanner implements Planner {
       // Create the user prompt with context
       const userPrompt = this.buildUserPrompt(input.text, input.state);
       
-      // Make the API call with structured output
+      // Make the API call with retry logic
       const fullPrompt = `${systemPrompt}\n\nUser request: ${userPrompt}`;
       
-      const response = await this.client.models.generateContent({
-        model: this.config.model,
-        contents: [
-          { role: 'user', parts: [{ text: fullPrompt }] }
-        ],
-        config: {
-          temperature: this.config.temperature,
-          responseMimeType: 'application/json'
-          // Don't use responseSchema - it requires full property definitions
-          // Let Gemini return freeform JSON and we'll validate it ourselves
+      let response;
+      let lastError;
+      const maxRetries = 3;
+      
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // Create AbortController for timeout (per attempt)
+        const controller = new AbortController();
+        const timeoutId = this.config.timeout > 0 ? 
+          setTimeout(() => controller.abort(), this.config.timeout) : null;
+        
+        try {
+          response = await this.client.models.generateContent({
+            model: this.config.model,
+            contents: [
+              { role: 'user', parts: [{ text: fullPrompt }] }
+            ],
+            config: {
+              temperature: this.config.temperature,
+              responseMimeType: 'application/json'
+              // Don't use responseSchema - it requires full property definitions
+              // Let Gemini return freeform JSON and we'll validate it ourselves
+              // Note: signal is not supported by @google/genai, timeout handled via AbortController
+            }
+          });
+          
+          // Clear timeout if successful
+          if (timeoutId) clearTimeout(timeoutId);
+          break; // Success, exit retry loop
+          
+        } catch (err: any) {
+          // Clear timeout on error
+          if (timeoutId) clearTimeout(timeoutId);
+          
+          lastError = err;
+          
+          // Check if it was aborted due to timeout
+          if (err.name === 'AbortError') {
+            lastError = new Error('timeout');
+          }
+          
+          // Check if we should retry
+          const isRetryable = err.message?.includes('429') || 
+                             err.message?.includes('503') ||
+                             err.message?.includes('rate') ||
+                             err.status === 429 || 
+                             err.status === 503;
+          
+          if (isRetryable && attempt < maxRetries - 1) {
+            // Exponential backoff: 1s, 2s, 4s
+            const delay = Math.pow(2, attempt) * 1000;
+            logger.line('info', { event: 'planner_retry', 
+              attempt: attempt + 1, 
+              delay,
+              error: err.message 
+            });
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          
+          // No more retries, throw the error
+          throw lastError;
         }
-      });
+      }
+      
+      if (!response) {
+        throw lastError || new Error('Failed to get response from Gemini');
+      }
+      
       let responseText = response.text || '';
       
       // Strip markdown code blocks if present (Gemini sometimes wraps JSON in ```json...```)
@@ -170,7 +226,8 @@ export class GeminiPlanner implements Planner {
       console.error('[GEMINI ERROR STACK]:', error.stack);
       
       // Log fallback
-      const reason = error.message?.includes('rate') ? 'rate_limit' :
+      const reason = error.message === 'timeout' ? 'timeout' :
+                     error.message?.includes('rate') ? 'rate_limit' :
                      error.message?.includes('network') ? 'network_error' :
                      'api_error';
       
