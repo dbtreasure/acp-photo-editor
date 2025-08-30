@@ -111,7 +111,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
     expect(textUpdate.content.text).toContain('contrast 150 → 100');
   });
 
-  it('should handle amend-last behavior', async () => {
+  it('should handle cumulative behavior across commands', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
     
@@ -121,7 +121,43 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
       prompt: [{ type: 'text', text: ':reset' }]
     });
     
-    // Apply two contrast adjustments - should amend to single op
+    // First warmer command
+    await peer.request('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: ':ask warmer' }]
+    });
+    
+    // Clear updates
+    updates.length = 0;
+    
+    // Second warmer command - should accumulate
+    const result = await peer.request('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: ':ask warmer' }]
+    });
+    
+    expect(result.stopReason).toBe('end_turn');
+    
+    const textUpdate = updates.find(u => 
+      u.sessionUpdate === 'agent_message_chunk' && 
+      u.content?.type === 'text'
+    );
+    expect(textUpdate).toBeDefined();
+    expect(textUpdate.content.text).toContain('Stack:');
+    expect(textUpdate.content.text).toContain('WB(temp 40'); // Should be +40, not +20
+  });
+
+  it('should handle amend-last within single command', async () => {
+    const updates: any[] = [];
+    peer.on('session/update', (params) => updates.push(params));
+    
+    // First, reset the stack
+    await peer.request('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: ':reset' }]
+    });
+    
+    // Apply two contrast adjustments in one command - MockPlanner accumulates
     const result = await peer.request('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text: ':ask contrast 35, contrast 10' }]
@@ -134,7 +170,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
       u.content?.type === 'text'
     );
     expect(textUpdate).toBeDefined();
-    expect(textUpdate.content.text).toContain('Stack: Contrast +45');
+    expect(textUpdate.content.text).toContain('Stack: Contrast +45'); // MockPlanner accumulates within command
   });
 
   it('should handle undo/redo/reset commands', async () => {

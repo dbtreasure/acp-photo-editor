@@ -278,6 +278,29 @@ describe('MockPlanner', () => {
     });
   });
 
+  describe('Operation Ordering', () => {
+    it('should place color operations before geometry operations', () => {
+      const result = planner.plan({ text: 'crop square, warmer, contrast 10, straighten 2' });
+      
+      // Should reorder to: warmer, contrast, then crop
+      expect(result.calls).toHaveLength(3);
+      expect(result.calls[0].fn).toBe('set_white_balance_temp_tint');
+      expect(result.calls[1].fn).toBe('set_contrast');
+      expect(result.calls[2].fn).toBe('set_crop');
+      expect((result.calls[2] as any).args.aspect).toBe('1:1');
+      expect((result.calls[2] as any).args.angleDeg).toBe(2);
+    });
+
+    it('should combine multiple crop operations into one', () => {
+      const result = planner.plan({ text: '16:9, straighten 2, straighten 3' });
+      
+      expect(result.calls).toHaveLength(1);
+      expect(result.calls[0].fn).toBe('set_crop');
+      expect((result.calls[0] as any).args.aspect).toBe('16:9');
+      expect((result.calls[0] as any).args.angleDeg).toBe(5); // 2 + 3
+    });
+  });
+
   describe('Edge Cases', () => {
     it('should handle empty text', () => {
       const result = planner.plan({ text: '' });
