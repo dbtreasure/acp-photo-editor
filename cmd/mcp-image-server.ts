@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+// Load environment variables from .env file
+try {
+  require('dotenv').config();
+} catch (e) {
+  // dotenv is optional, ignore if not available
+}
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { 

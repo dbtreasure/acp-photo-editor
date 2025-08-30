@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+// Load environment variables from .env file
+try {
+  require('dotenv').config();
+} catch (e) {
+  // dotenv is optional, ignore if not available
+}
+
 import minimist from 'minimist';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -11,13 +18,17 @@ import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src
 import { isITerm2, itermShowImage } from '../src/common/iterm-images';
 
 const args = minimist(process.argv.slice(2), {
-  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images', 'thumb-width', 'thumb-height', 'planner'],
-  boolean: ['interactive', 'mcp'],
+  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images', 'thumb-width', 'thumb-height', 'planner', 'planner-model', 'planner-timeout', 'planner-max-calls'],
+  boolean: ['interactive', 'mcp', 'planner-log-text'],
   alias: { i: 'interactive' },
   default: { 
     mcp: true,  // Enable MCP by default
     'tty-images': 'auto',  // Auto-detect iTerm2
-    planner: 'mock'  // Default to mock planner for Phase 7a
+    planner: 'mock',  // Default to mock planner
+    'planner-model': 'gemini-2.5-flash',
+    'planner-timeout': '10000',
+    'planner-max-calls': '6',
+    'planner-log-text': false
   }
 });
 
@@ -65,7 +76,15 @@ async function main() {
       });
       console.log('DEMO:INIT:OK', JSON.stringify(initRes));
 
-      const newRes = await peer.request('session/new', { cwd, mcpServers, planner: args.planner });
+      const newRes = await peer.request('session/new', { 
+        cwd, 
+        mcpServers, 
+        planner: args.planner,
+        plannerModel: args['planner-model'],
+        plannerTimeout: parseInt(args['planner-timeout']),
+        plannerMaxCalls: parseInt(args['planner-max-calls']),
+        plannerLogText: args['planner-log-text']
+      });
       const sessionId = newRes.sessionId;
       console.log('DEMO:SESSION', sessionId);
 

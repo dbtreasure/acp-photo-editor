@@ -1,11 +1,11 @@
-# ACP Photo Editor — Phase 7a
+# ACP Photo Editor — Phase 7b
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **natural language editing** via the `:ask` command with a deterministic MockPlanner that lays the groundwork for future Gemini integration (Phases 7b-7d).
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **AI-powered natural language editing** via Google's Gemini 2.5 Flash model with structured JSON output and automatic fallback to mock planner.
 
 ## Quick Start
 
 ```bash
-# Requires Node.js >= 18.17.0 (recommended: v20+ or v24+)
+# Requires Node.js >= 20.0.0 (for @google/genai compatibility)
 # If using nvm:
 nvm use 24  # or 20, 22
 
@@ -15,32 +15,60 @@ npm install
 # Build the project
 npm run build
 
-# Run interactive mode with MCP
+# Run interactive mode with Gemini planner
+GEMINI_API_KEY=your-api-key npm run interactive -- --planner=gemini
+
+# Run with mock planner (no API key required)
 npm run interactive
 
 # Run the demo
 npm run demo
 ```
 
-## What's New in Phase 7a
+## What's New in Phase 7b
 
-Phase 7a introduces natural language editing with a rule-based MockPlanner:
-- **:ask Command**: Process natural language editing requests
-- **MockPlanner**: Deterministic regex-based text parsing
-- **Planner Interface**: Frozen contract for Gemini drop-in (7b)
-- **Smart Processing**: Accumulates adjustments, amend-last logic
-- **Clamping & Validation**: Agent enforces constraints
-- **Forward Compatible**: --planner flag ready for mock|gemini|off
+Phase 7b adds Gemini 2.5 Flash integration for intelligent natural language processing:
+- **Gemini Planner**: Uses Google's Gemini 2.5 Flash model for NLP
+- **Structured Output**: JSON Schema validation ensures reliable responses
+- **Automatic Fallback**: Falls back to MockPlanner on errors/timeout
+- **Smart Clamping**: Server-side validation and range enforcement
+- **Telemetry**: Comprehensive logging of planner operations
+- **Configuration**: Flexible timeout, model, and call limits
 
-Example commands:
-- `:ask warmer, +0.5 ev, more contrast, crop square`
-- `:ask cool by 15, contrast -10, 16:9, straighten 1.2°`
-- `:ask export to ./Export/hero.jpg quality 92`
+### Planner Configuration
+
+```bash
+# Use Gemini planner (requires GEMINI_API_KEY environment variable)
+./photo-client --planner=gemini
+
+# Additional options
+--planner-model=gemini-2.5-flash  # Model selection
+--planner-timeout=2000             # Timeout in ms (default: 2000)
+--planner-max-calls=6              # Max operations per request
+--planner-log-text                 # Log user text for debugging
+
+# Disable planner
+./photo-client --planner=off
+```
+
+### Example Commands
+
+Natural language editing with Gemini understands complex requests:
+- `:ask "make it warmer and brighter with more contrast"`
+- `:ask "cool tones, lift shadows, crop to 16:9 for video"`
+- `:ask "subtle warm grade, +0.3 exposure, slight vignette"`
+- `:ask "export to ./finals/hero.jpg at 95% quality"`
+
+The Gemini planner intelligently:
+- Interprets semantic meaning ("warmer" → temp adjustment)
+- Applies appropriate values based on context
+- Handles multiple operations in logical order
+- Validates and clamps all values to safe ranges
 
 ## Phase 7 Roadmap
 
-- **7a (current)**: MockPlanner with deterministic text → ops
-- **7b**: Swap to Gemini (text-only) via same Planner interface
+- **7a**: MockPlanner with deterministic text → ops ✅
+- **7b (current)**: Gemini 2.5 Flash integration (text-only) ✅
 - **7c**: Add vision-lite (1024px preview input)
 - **7d**: Full tool catalog + export in single turn
 

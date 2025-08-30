@@ -23,9 +23,10 @@ export type PlannedCall =
 
 export interface PlannerInput {
   text: string;
-  // Future fields for 7b-7d:
-  // image?: string;  // base64 image for vision
-  // context?: any;   // additional context
+  // Phase 7b-7d fields:
+  state?: any;  // Planner state with image metadata
+  // Future fields:
+  // image?: string;  // base64 image for vision (7c)
 }
 
 export interface PlannerOutput {
@@ -34,7 +35,7 @@ export interface PlannerOutput {
 }
 
 export interface Planner {
-  plan(input: PlannerInput): PlannerOutput;
+  plan(input: PlannerInput): PlannerOutput | Promise<PlannerOutput>;
 }
 
 // Agent-enforced constraints (applied after planning)

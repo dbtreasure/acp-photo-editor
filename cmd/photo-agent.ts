@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+// Load environment variables from .env file
+try {
+  require('dotenv').config();
+} catch (e) {
+  // dotenv is optional, ignore if not available
+}
+
 import { createNdjsonReader } from '../src/common/ndjson';
 import { NdjsonLogger } from '../src/common/logger';
 import { Readable } from 'stream';
@@ -7,7 +14,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { MCPServerConfig, ContentBlock, ToolCallContent, PermissionOperation } from '../src/acp/types';
 import { EditStackManager } from '../src/editStack';
 import { MockPlanner } from '../src/planner/mock';
-import { PlannedCall, PLANNER_CLAMPS } from '../src/planner/types';
+import { GeminiPlanner, PlannerState as GeminiPlannerState } from '../src/planner/gemini';
+import { Planner, PlannedCall, PLANNER_CLAMPS } from '../src/planner/types';
 import path from 'path';
 import fs from 'fs/promises';
 import { pathToFileURL } from 'url';
@@ -24,7 +32,13 @@ const imageStacks = new Map<string, EditStackManager>();
 let lastLoadedImage: string | null = null;
 
 // Planner configuration (from session/new)
-let plannerMode: 'mock' | 'off' = 'mock';
+let plannerMode: 'mock' | 'gemini' | 'off' = 'mock';
+let plannerConfig: {
+  model?: string;
+  timeout?: number;
+  maxCalls?: number;
+  logText?: boolean;
+} = {};
 
 // Permission request tracking
 const pendingPermissions = new Map<number, {
@@ -74,12 +88,22 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
     }
     currentSessionId = `sess_${Math.random().toString(36).slice(2, 10)}`;
     
-    // Extract planner mode from params (Phase 7a)
+    // Extract planner mode and config from params (Phase 7b)
     if (params.planner === 'off') {
       plannerMode = 'off';
+    } else if (params.planner === 'gemini') {
+      plannerMode = 'gemini';
     } else {
-      plannerMode = 'mock'; // Default to mock for Phase 7a
+      plannerMode = 'mock'; // Default to mock
     }
+    
+    // Extract planner config options
+    plannerConfig = {
+      model: params.plannerModel || 'gemini-2.5-flash',
+      timeout: params.plannerTimeout || 10000,
+      maxCalls: params.plannerMaxCalls || 6,
+      logText: params.plannerLogText || false
+    };
     
     // Connect to MCP servers if provided
     const mcpServers = params.mcpServers || [];
@@ -424,6 +448,31 @@ function notify(method:string, params:any) {
   send(msg);
 }
 
+// Helper to get image metadata
+async function getImageMetadata(uri: string, client: Client): Promise<{ width: number; height: number; mimeType?: string }> {
+  try {
+    const result = await client.callTool({
+      name: 'read_image_meta',
+      arguments: { uri }
+    });
+    
+    const content = result.content as any;
+    if (content?.[0]?.type === 'text') {
+      const meta = JSON.parse(content[0].text);
+      return {
+        width: meta.width || 0,
+        height: meta.height || 0,
+        mimeType: meta.format ? `image/${meta.format.toLowerCase()}` : undefined
+      };
+    }
+  } catch (error) {
+    logger.line('error', { get_image_metadata_failed: error });
+  }
+  
+  // Return defaults if metadata fetch fails
+  return { width: 0, height: 0, mimeType: 'image/jpeg' };
+}
+
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
   logger.line('info', { handleAskCommand_called: true, command, plannerMode });
   
@@ -432,7 +481,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     notify('session/update', {
       sessionId,
       sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: 'Planner disabled. Use --planner=mock to enable.' }
+      content: { type: 'text', text: 'Planner disabled. Use --planner=mock or --planner=gemini to enable.' }
     });
     return;
   }
@@ -458,9 +507,40 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     throw new Error('No text provided. Usage: :ask "warmer, +0.5 ev, crop square"');
   }
   
-  // Use MockPlanner to parse the text into operations
-  const planner = new MockPlanner();
-  const { calls, notes } = planner.plan({ text: askText });
+  // Select planner based on configuration
+  let planner: Planner;
+  if (plannerMode === 'gemini') {
+    planner = new GeminiPlanner(plannerConfig);
+  } else {
+    planner = new MockPlanner();
+  }
+  
+  // Build planner state for context (Phase 7b)
+  const imageMeta = await getImageMetadata(lastLoadedImage, client);
+  const plannerState: GeminiPlannerState = {
+    image: {
+      name: path.basename(lastLoadedImage),
+      w: imageMeta.width,
+      h: imageMeta.height,
+      mime: imageMeta.mimeType || 'image/jpeg'
+    },
+    stackSummary: stackManager.getStackSummary(),
+    limits: {
+      temp: [PLANNER_CLAMPS.temp.min, PLANNER_CLAMPS.temp.max],
+      ev: [PLANNER_CLAMPS.ev.min, PLANNER_CLAMPS.ev.max],
+      contrast: [PLANNER_CLAMPS.contrast.min, PLANNER_CLAMPS.contrast.max],
+      angle: [PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max]
+    }
+  };
+  
+  // Plan the operations
+  const startTime = Date.now();
+  const { calls, notes } = await planner.plan({ text: askText, state: plannerState });
+  const planningTime = Date.now() - startTime;
+  
+  // Log apply result
+  const stackBefore = stackManager.getStack();
+  const stackHashBefore = JSON.stringify(stackBefore).length; // Simple hash
   
   logger.line('info', { planner_output: { calls, notes } });
   
@@ -668,6 +748,17 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     }
   }
   
+  // Log apply result telemetry
+  const stackAfter = stackManager.getStack();
+  const stackHashAfter = JSON.stringify(stackAfter).length; // Simple hash
+  logger.line('info', { event: 'apply_result',
+    stackHashBefore,
+    stackHashAfter,
+    previewMs: planningTime,
+    operationsApplied: appliedOps.length,
+    valuesClamped: clampedValues.length
+  });
+  
   // Build summary text
   let summaryText = '';
   if (appliedOps.length > 0) {
@@ -827,6 +918,14 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
               dstUri,
               ...exportOptions
             }
+          });
+          
+          // Log export result telemetry
+          logger.line('info', { event: 'export_result',
+            destination: dstPath,
+            format: exportOptions.format,
+            quality: exportOptions.quality,
+            success: true
           });
           
           notify('session/update', {
