@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 6
+# ACP Photo Editor — Phase 7a
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, featuring non-destructive edit stack, crop/straighten operations, comprehensive color adjustments (white balance, exposure, contrast, saturation, vibrance), intelligent auto adjustments, histogram analysis, and full-resolution export with sidecar persistence.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **natural language editing** via the `:ask` command with a deterministic MockPlanner that lays the groundwork for future Gemini integration (Phases 7b-7d).
 
 ## Quick Start
 
@@ -22,7 +22,29 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 6
+## What's New in Phase 7a
+
+Phase 7a introduces natural language editing with a rule-based MockPlanner:
+- **:ask Command**: Process natural language editing requests
+- **MockPlanner**: Deterministic regex-based text parsing
+- **Planner Interface**: Frozen contract for Gemini drop-in (7b)
+- **Smart Processing**: Accumulates adjustments, amend-last logic
+- **Clamping & Validation**: Agent enforces constraints
+- **Forward Compatible**: --planner flag ready for mock|gemini|off
+
+Example commands:
+- `:ask warmer, +0.5 ev, more contrast, crop square`
+- `:ask cool by 15, contrast -10, 16:9, straighten 1.2°`
+- `:ask export to ./Export/hero.jpg quality 92`
+
+## Phase 7 Roadmap
+
+- **7a (current)**: MockPlanner with deterministic text → ops
+- **7b**: Swap to Gemini (text-only) via same Planner interface
+- **7c**: Add vision-lite (1024px preview input)
+- **7d**: Full tool catalog + export in single turn
+
+## What's New in Previous Phases
 
 Phase 6 adds advanced color operations and intelligent adjustments:
 - **Saturation/Vibrance**: Global color enhancement with smart protection
@@ -77,6 +99,14 @@ Previous Phase 2 features:
 - `:auto contrast` - Automatic contrast based on histogram percentiles
 - `:auto all` - Apply all auto adjustments in sequence (WB → EV → Contrast)
 
+### Natural Language Editing (Phase 7a)
+- `:ask warmer` - Make image warmer
+- `:ask +0.5 ev, more contrast` - Multiple adjustments
+- `:ask crop square, straighten 2°` - Crop and rotate
+- `:ask cool by 15, contrast -10, 16:9` - Complex edits
+- `:ask undo undo redo` - History operations
+- `:ask export to output.jpg quality 95` - Export with options
+
 ### Analysis Tools
 - `:hist` - Display histogram with 64-bin sparklines and clipping percentages
 
@@ -112,6 +142,38 @@ Previous Phase 2 features:
 ```
 
 ## Demo Script
+
+### Phase 7a - Natural Language Editing
+
+```bash
+npm run interactive
+
+# Load an image
+> :open test/assets/test.jpg
+
+# Use natural language to edit
+> :ask warmer, +0.5 ev, more contrast, crop square
+Processing: warmer, +0.5 ev, more contrast, crop square
+Applied: WB(temp +20 tint +0), EV +0.50, Contrast +20, Crop 1:1
+Stack: WB(temp 20 tint 0) • EV +0.50 • Contrast +20 • Crop 1:1
+[Preview displayed]
+
+# Complex command with clamping
+> :ask cool by 200, ev 10
+Processing: cool by 200, ev 10
+Applied: WB(temp -100 tint +0), EV +3.00
+Clamped: temp -200 → -100, ev 10.0 → 3.0
+Stack: WB(temp -100 tint 0) • EV +3.00 • Contrast +20 • Crop 1:1
+
+# Export with natural language
+> :ask export to ./Export/final.jpg quality 95
+Processing: export to ./Export/final.jpg quality 95
+📝 Permission Request:
+   Title: Export edited image
+   Explanation: Write edited image to final.jpg
+Approve? (y/n): y
+Export complete: ./Export/final.jpg
+```
 
 ### Interactive Mode with Images
 

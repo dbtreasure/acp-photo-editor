@@ -11,12 +11,13 @@ import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src
 import { isITerm2, itermShowImage } from '../src/common/iterm-images';
 
 const args = minimist(process.argv.slice(2), {
-  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images', 'thumb-width', 'thumb-height'],
+  string: ['agent', 'agentArgs', 'cwd', 'demo', 'tty-images', 'thumb-width', 'thumb-height', 'planner'],
   boolean: ['interactive', 'mcp'],
   alias: { i: 'interactive' },
   default: { 
     mcp: true,  // Enable MCP by default
-    'tty-images': 'auto'  // Auto-detect iTerm2
+    'tty-images': 'auto',  // Auto-detect iTerm2
+    planner: 'mock'  // Default to mock planner for Phase 7a
   }
 });
 
@@ -64,7 +65,7 @@ async function main() {
       });
       console.log('DEMO:INIT:OK', JSON.stringify(initRes));
 
-      const newRes = await peer.request('session/new', { cwd, mcpServers });
+      const newRes = await peer.request('session/new', { cwd, mcpServers, planner: args.planner });
       const sessionId = newRes.sessionId;
       console.log('DEMO:SESSION', sessionId);
 
@@ -102,7 +103,7 @@ async function main() {
       process.exit(1);
     }
 
-    const newRes = await peer.request('session/new', { cwd, mcpServers });
+    const newRes = await peer.request('session/new', { cwd, mcpServers, planner: args.planner });
     const sessionId = newRes.sessionId;
     console.log(`Session created: ${sessionId}`);
     if (mcpServers.length > 0) {
@@ -175,6 +176,35 @@ async function main() {
             }
           }
         } else if (status === 'completed') {
+          // Check if we have image content in the completed update
+          if (content && Array.isArray(content)) {
+            for (const item of content) {
+              if (item.type === 'image') {
+                const thumb = thumbnails.get(toolCallId) || {};
+                thumb.image = item.data;
+                thumb.mimeType = item.mimeType || 'image/png';
+                thumbnails.set(toolCallId, thumb);
+                
+                const sizeKB = Math.round(item.data.length * 0.75 / 1024);
+                console.log(`[preview:${toolCallId}] Received ${thumb.mimeType} (${sizeKB}KB)`);
+                
+                // Display image in iTerm2 if supported
+                if (useItermImages) {
+                  try {
+                    itermShowImage(item.data, {
+                      name: `preview_${toolCallId}.png`,
+                      width: args['thumb-width'] || '64',
+                      height: args['thumb-height'] || 'auto',
+                      preserveAspectRatio: true
+                    });
+                    console.log(`[iTerm2] Displayed preview`);
+                  } catch (err: any) {
+                    console.log(`[iTerm2] Failed to display: ${err.message}`);
+                  }
+                }
+              }
+            }
+          }
           console.log(`[completed:${toolCallId}]`);
         } else if (status === 'failed') {
           console.log(`[failed:${toolCallId}]`);
@@ -224,6 +254,9 @@ async function main() {
       console.log('  :undo            - Undo last edit operation');
       console.log('  :redo            - Redo previously undone operation');
       console.log('  :reset           - Reset to original image');
+      console.log('  :ask <text>      - Natural language editing (Phase 7a)');
+      console.log('    Examples: :ask warmer, +0.5 ev, more contrast, crop square');
+      console.log('              :ask cool by 15, contrast -10, 16:9, straighten 1.2°');
       console.log('  :export [opts]   - Export edited image to disk');
       console.log('    --format jpeg|png    - Output format (default: jpeg)');
       console.log('    --quality 1-100      - JPEG quality (default: 90)');
@@ -325,6 +358,35 @@ async function main() {
               console.error('[error]', e?.message || String(e));
             }
             isPrompting = false;
+          }
+        } else if (cmd.startsWith(':ask ')) {
+          // Handle natural language ask command (Phase 7a)
+          if (isPrompting) {
+            console.log('A prompt is already in progress. Use :cancel to cancel it.');
+          } else {
+            // Extract text after :ask, removing quotes if present
+            let askText = cmd.substring(5).trim();
+            // Remove surrounding quotes if present
+            if ((askText.startsWith('"') && askText.endsWith('"')) || 
+                (askText.startsWith("'") && askText.endsWith("'"))) {
+              askText = askText.slice(1, -1);
+            }
+            if (!askText) {
+              console.log('Usage: :ask <text>. Example: :ask warmer, +0.5 ev, crop square');
+            } else {
+              isPrompting = true;
+              console.log(`Processing: ${askText}`);
+              try {
+                const pRes = await peer.request('session/prompt', {
+                  sessionId,
+                  prompt: [{ type: 'text', text: `:ask ${askText}` }]
+                });
+                console.log(`[result] stopReason: ${pRes.stopReason}`);
+              } catch (e: any) {
+                console.error('[error]', e?.message || String(e));
+              }
+              isPrompting = false;
+            }
           }
         } else if (cmd.startsWith(':export')) {
           // Handle export command
