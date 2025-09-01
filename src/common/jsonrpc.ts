@@ -1,14 +1,13 @@
-
 import { createNdjsonReader } from './ndjson';
 import { Readable, Writable } from 'stream';
 import { NdjsonLogger } from './logger';
 
-type Pending = { resolve: (v:any)=>void, reject: (e:any)=>void };
+type Pending = { resolve: (v: any) => void; reject: (e: any) => void };
 
 export class JsonRpcPeer {
   private nextId = 1;
   private pending = new Map<number, Pending>();
-  private notifyHandlers = new Map<string, ((params:any)=>void)[]>();
+  private notifyHandlers = new Map<string, ((params: any) => void)[]>();
   private writer: Writable;
   private logger: NdjsonLogger;
 
@@ -44,7 +43,7 @@ export class JsonRpcPeer {
     }
   }
 
-  on(method: string, cb: (params:any)=>void) {
+  on(method: string, cb: (params: any) => void) {
     const arr = this.notifyHandlers.get(method) || [];
     arr.push(cb);
     this.notifyHandlers.set(method, arr);
@@ -67,7 +66,7 @@ export class JsonRpcPeer {
   send(obj: any) {
     this.sendRaw(obj);
   }
-  
+
   private sendRaw(obj: any) {
     this.logger.line('send', obj);
     this.writer.write(JSON.stringify(obj) + '\n');

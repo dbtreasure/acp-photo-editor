@@ -5,12 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project: ACP Photo Editor - Phase 0
 
 This is a minimal implementation of the Agent Client Protocol (ACP) with two CLIs:
+
 - **photo-client**: JSON-RPC client over stdio
 - **photo-agent**: Responds to initialize → session/new → session/prompt, streams session/update
 
 ## Protocol Implementation
 
 The system implements ACP v1 with these specific requirements:
+
 - JSON-RPC 2.0 over stdio only
 - Text-only content blocks (no images/audio/tools in Phase 0)
 - Client spawns agent process and communicates via stdin/stdout
@@ -34,25 +36,29 @@ The system implements ACP v1 with these specific requirements:
 ## Development Setup
 
 The project structure should follow:
+
 ```
 /cmd/photo-client/       # CLI entry point
-/cmd/photo-agent/        # Agent entry point  
+/cmd/photo-agent/        # Agent entry point
 /pkg/acp/                # Shared JSON-RPC and ACP types
 /pkg/logs/               # NDJSON logging
 ```
 
 Tech stack options:
+
 - TypeScript with `@zed-industries/agent-client-protocol`
 - Rust with `agent-client-protocol` crate
 
 ## Testing Requirements
 
 Unit tests must cover:
+
 - JSON-RPC envelope encode/decode with malformed input handling
 - Protocol version negotiation (match, down-negotiate, mismatch)
 - Prompt handler returning end_turn for "ping"
 
 Integration test must verify:
+
 - Full handshake with protocolVersion==1
 - Session creation with absolute CWD
 - "ping" → "pong" + end_turn flow
@@ -64,7 +70,7 @@ Integration test must verify:
 # Terminal 1
 ./photo-agent
 
-# Terminal 2  
+# Terminal 2
 ./photo-client --agent ./photo-agent --cwd /abs/path
 :ping     # triggers prompt
 :cancel   # optional cancel test

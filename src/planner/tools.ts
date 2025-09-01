@@ -12,25 +12,25 @@ export const TOOL_SCHEMAS = {
       args: {
         type: 'object',
         properties: {
-          temp: { 
+          temp: {
             type: 'number',
             minimum: PLANNER_CLAMPS.temp.min,
             maximum: PLANNER_CLAMPS.temp.max,
-            description: 'Temperature adjustment (-100 to 100)'
+            description: 'Temperature adjustment (-100 to 100)',
           },
-          tint: { 
+          tint: {
             type: 'number',
             minimum: PLANNER_CLAMPS.tint.min,
             maximum: PLANNER_CLAMPS.tint.max,
-            description: 'Tint adjustment (-100 to 100)'
-          }
+            description: 'Tint adjustment (-100 to 100)',
+          },
         },
-        required: ['temp', 'tint']
-      }
+        required: ['temp', 'tint'],
+      },
     },
-    required: ['fn', 'args']
+    required: ['fn', 'args'],
   },
-  
+
   set_white_balance_gray: {
     type: 'object',
     properties: {
@@ -38,25 +38,25 @@ export const TOOL_SCHEMAS = {
       args: {
         type: 'object',
         properties: {
-          x: { 
+          x: {
             type: 'number',
             minimum: PLANNER_CLAMPS.grayPoint.min,
             maximum: PLANNER_CLAMPS.grayPoint.max,
-            description: 'X coordinate (0 to 1)'
+            description: 'X coordinate (0 to 1)',
           },
-          y: { 
+          y: {
             type: 'number',
             minimum: PLANNER_CLAMPS.grayPoint.min,
             maximum: PLANNER_CLAMPS.grayPoint.max,
-            description: 'Y coordinate (0 to 1)'
-          }
+            description: 'Y coordinate (0 to 1)',
+          },
         },
-        required: ['x', 'y']
-      }
+        required: ['x', 'y'],
+      },
     },
-    required: ['fn', 'args']
+    required: ['fn', 'args'],
   },
-  
+
   set_exposure: {
     type: 'object',
     properties: {
@@ -64,19 +64,19 @@ export const TOOL_SCHEMAS = {
       args: {
         type: 'object',
         properties: {
-          ev: { 
+          ev: {
             type: 'number',
             minimum: PLANNER_CLAMPS.ev.min,
             maximum: PLANNER_CLAMPS.ev.max,
-            description: 'Exposure value adjustment (-3 to 3)'
-          }
+            description: 'Exposure value adjustment (-3 to 3)',
+          },
         },
-        required: ['ev']
-      }
+        required: ['ev'],
+      },
     },
-    required: ['fn', 'args']
+    required: ['fn', 'args'],
   },
-  
+
   set_contrast: {
     type: 'object',
     properties: {
@@ -84,19 +84,19 @@ export const TOOL_SCHEMAS = {
       args: {
         type: 'object',
         properties: {
-          amt: { 
+          amt: {
             type: 'number',
             minimum: PLANNER_CLAMPS.contrast.min,
             maximum: PLANNER_CLAMPS.contrast.max,
-            description: 'Contrast amount (-100 to 100)'
-          }
+            description: 'Contrast amount (-100 to 100)',
+          },
         },
-        required: ['amt']
-      }
+        required: ['amt'],
+      },
     },
-    required: ['fn', 'args']
+    required: ['fn', 'args'],
   },
-  
+
   set_crop: {
     type: 'object',
     properties: {
@@ -107,51 +107,51 @@ export const TOOL_SCHEMAS = {
           aspect: {
             type: 'string',
             enum: ['1:1', '3:2', '4:3', '16:9'],
-            description: 'Aspect ratio preset'
+            description: 'Aspect ratio preset',
           },
           rectNorm: {
             type: 'array',
             items: { type: 'number', minimum: 0, maximum: 1 },
             minItems: 4,
             maxItems: 4,
-            description: 'Normalized crop rectangle [x, y, width, height]'
+            description: 'Normalized crop rectangle [x, y, width, height]',
           },
           angleDeg: {
             type: 'number',
             minimum: PLANNER_CLAMPS.angleDeg.min,
             maximum: PLANNER_CLAMPS.angleDeg.max,
-            description: 'Rotation angle in degrees (-45 to 45)'
-          }
-        }
-      }
+            description: 'Rotation angle in degrees (-45 to 45)',
+          },
+        },
+      },
     },
-    required: ['fn', 'args']
+    required: ['fn', 'args'],
   },
-  
+
   undo: {
     type: 'object',
     properties: {
-      fn: { type: 'string', enum: ['undo'] }
+      fn: { type: 'string', enum: ['undo'] },
     },
-    required: ['fn']
+    required: ['fn'],
   },
-  
+
   redo: {
     type: 'object',
     properties: {
-      fn: { type: 'string', enum: ['redo'] }
+      fn: { type: 'string', enum: ['redo'] },
     },
-    required: ['fn']
+    required: ['fn'],
   },
-  
+
   reset: {
     type: 'object',
     properties: {
-      fn: { type: 'string', enum: ['reset'] }
+      fn: { type: 'string', enum: ['reset'] },
     },
-    required: ['fn']
+    required: ['fn'],
   },
-  
+
   export_image: {
     type: 'object',
     properties: {
@@ -161,28 +161,28 @@ export const TOOL_SCHEMAS = {
         properties: {
           dst: {
             type: 'string',
-            description: 'Destination file path'
+            description: 'Destination file path',
           },
           format: {
             type: 'string',
             enum: ['jpeg', 'png'],
-            description: 'Export format'
+            description: 'Export format',
           },
           quality: {
             type: 'number',
             minimum: PLANNER_CLAMPS.quality.min,
             maximum: PLANNER_CLAMPS.quality.max,
-            description: 'JPEG quality (1 to 100)'
+            description: 'JPEG quality (1 to 100)',
           },
           overwrite: {
             type: 'boolean',
-            description: 'Whether to overwrite existing file'
-          }
-        }
-      }
+            description: 'Whether to overwrite existing file',
+          },
+        },
+      },
     },
-    required: ['fn']
-  }
+    required: ['fn'],
+  },
 };
 
 // Complete JSON Schema for the planner response
@@ -192,12 +192,12 @@ export const PLANNER_RESPONSE_SCHEMA = {
     calls: {
       type: 'array',
       items: {
-        oneOf: Object.values(TOOL_SCHEMAS)
+        oneOf: Object.values(TOOL_SCHEMAS),
       },
-      description: 'Array of tool calls to execute'
-    }
+      description: 'Array of tool calls to execute',
+    },
   },
-  required: ['calls']
+  required: ['calls'],
 };
 
 // Tool catalog description for the system prompt
@@ -241,10 +241,10 @@ export function validateAndClampCall(call: any): PlannedCall | null {
     if (!call || typeof call.fn !== 'string') {
       return null;
     }
-    
+
     // Apply clamping based on function type
     const clampedCall = { ...call };
-    
+
     switch (call.fn) {
       case 'set_white_balance_temp_tint':
         if (!call.args || typeof call.args.temp !== 'number' || typeof call.args.tint !== 'number') {
@@ -252,38 +252,38 @@ export function validateAndClampCall(call: any): PlannedCall | null {
         }
         clampedCall.args = {
           temp: clamp(call.args.temp, PLANNER_CLAMPS.temp.min, PLANNER_CLAMPS.temp.max),
-          tint: clamp(call.args.tint, PLANNER_CLAMPS.tint.min, PLANNER_CLAMPS.tint.max)
+          tint: clamp(call.args.tint, PLANNER_CLAMPS.tint.min, PLANNER_CLAMPS.tint.max),
         };
         break;
-        
+
       case 'set_white_balance_gray':
         if (!call.args || typeof call.args.x !== 'number' || typeof call.args.y !== 'number') {
           return null;
         }
         clampedCall.args = {
           x: clamp(call.args.x, PLANNER_CLAMPS.grayPoint.min, PLANNER_CLAMPS.grayPoint.max),
-          y: clamp(call.args.y, PLANNER_CLAMPS.grayPoint.min, PLANNER_CLAMPS.grayPoint.max)
+          y: clamp(call.args.y, PLANNER_CLAMPS.grayPoint.min, PLANNER_CLAMPS.grayPoint.max),
         };
         break;
-        
+
       case 'set_exposure':
         if (!call.args || typeof call.args.ev !== 'number') {
           return null;
         }
         clampedCall.args = {
-          ev: clamp(call.args.ev, PLANNER_CLAMPS.ev.min, PLANNER_CLAMPS.ev.max)
+          ev: clamp(call.args.ev, PLANNER_CLAMPS.ev.min, PLANNER_CLAMPS.ev.max),
         };
         break;
-        
+
       case 'set_contrast':
         if (!call.args || typeof call.args.amt !== 'number') {
           return null;
         }
         clampedCall.args = {
-          amt: clamp(call.args.amt, PLANNER_CLAMPS.contrast.min, PLANNER_CLAMPS.contrast.max)
+          amt: clamp(call.args.amt, PLANNER_CLAMPS.contrast.min, PLANNER_CLAMPS.contrast.max),
         };
         break;
-        
+
       case 'set_crop':
         if (!call.args) {
           return null;
@@ -293,9 +293,7 @@ export function validateAndClampCall(call: any): PlannedCall | null {
           cropArgs.aspect = call.args.aspect;
         }
         if (Array.isArray(call.args.rectNorm) && call.args.rectNorm.length === 4) {
-          cropArgs.rectNorm = call.args.rectNorm.map((v: number) => 
-            clamp(v, 0, 1)
-          );
+          cropArgs.rectNorm = call.args.rectNorm.map((v: number) => clamp(v, 0, 1));
         }
         if (typeof call.args.angleDeg === 'number') {
           cropArgs.angleDeg = clamp(call.args.angleDeg, PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max);
@@ -305,13 +303,13 @@ export function validateAndClampCall(call: any): PlannedCall | null {
         }
         clampedCall.args = cropArgs;
         break;
-        
+
       case 'undo':
       case 'redo':
       case 'reset':
         // No args needed
         break;
-        
+
       case 'export_image':
         if (call.args) {
           const exportArgs: any = {};
@@ -336,12 +334,12 @@ export function validateAndClampCall(call: any): PlannedCall | null {
           clampedCall.args = Object.keys(exportArgs).length > 0 ? exportArgs : undefined;
         }
         break;
-        
+
       default:
         // Unknown function
         return null;
     }
-    
+
     return clampedCall as PlannedCall;
   } catch {
     return null;
@@ -355,14 +353,14 @@ function clamp(value: number, min: number, max: number): number {
 // Track what values were clamped for reporting
 export function getClampedValues(original: PlannedCall, clamped: PlannedCall): string[] {
   const clampedValues: string[] = [];
-  
+
   if (original.fn !== clamped.fn) return clampedValues;
-  
+
   const origArgs = (original as any).args;
   const clampArgs = (clamped as any).args;
-  
+
   if (!origArgs || !clampArgs) return clampedValues;
-  
+
   switch (original.fn) {
     case 'set_white_balance_temp_tint':
       if (origArgs.temp !== clampArgs.temp) {
@@ -393,6 +391,6 @@ export function getClampedValues(original: PlannedCall, clamped: PlannedCall): s
       }
       break;
   }
-  
+
   return clampedValues;
 }

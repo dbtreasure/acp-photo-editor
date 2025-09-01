@@ -13,13 +13,16 @@
     "demo": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --demo ping",
     "demo:image": "node dist/cmd/photo-client.js --agent node --agentArgs dist/cmd/photo-agent.js --cwd . --interactive",
     "test": "vitest run",
-    "pretest": "npm run build"
+    "pretest": "npm run build",
+    "format": "prettier --write \"**/*.{ts,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md}\""
   },
   "devDependencies": {
     "@types/minimist": "^1.2.5",
     "@types/node": "^22.7.4",
     "dotenv": "^17.2.1",
     "minimist": "^1.2.8",
+    "prettier": "^3.6.2",
     "tsx": "^4.20.5",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"

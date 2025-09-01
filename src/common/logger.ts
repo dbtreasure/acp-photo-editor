@@ -1,4 +1,3 @@
-
 import fs from 'fs';
 import path from 'path';
 
@@ -22,5 +21,7 @@ export class NdjsonLogger {
     this.stream?.write(s + '\n');
   }
 
-  get path() { return this.filePath; }
+  get path() {
+    return this.filePath;
+  }
 }

@@ -8,10 +8,10 @@
       "Bash(npm test)",
       "WebSearch",
       "Bash(npm install:*)",
-      "WebFetch(domain:ai.google.dev)"
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(npm test:*)",
+      "Bash(cat:*)"
     ],
-    "additionalDirectories": [
-      "/Users/dan/Development/agent-client-protocol/"
-    ]
+    "additionalDirectories": ["/Users/dan/Development/agent-client-protocol/"]
   }
 }

@@ -10,16 +10,16 @@ vi.mock('@google/genai', () => ({
     constructor() {
       return {
         models: {
-          generateContent: mockGenerateContent
-        }
+          generateContent: mockGenerateContent,
+        },
       };
     }
   },
   Type: {
     OBJECT: 'object',
     ARRAY: 'array',
-    STRING: 'string'
-  }
+    STRING: 'string',
+  },
 }));
 
 describe('GeminiPlanner', () => {
@@ -42,7 +42,7 @@ describe('GeminiPlanner', () => {
 
     it('should fall back to mock planner when no API key', async () => {
       const result = await planner.plan({ text: 'warmer, +0.5 ev' });
-      
+
       expect(result.calls).toHaveLength(2);
       expect(result.notes).toContain('Planner fell back to mock (no API key).');
     });
@@ -61,23 +61,23 @@ describe('GeminiPlanner', () => {
             { fn: 'set_white_balance_temp_tint', args: { temp: 20, tint: 0 } },
             { fn: 'set_exposure', args: { ev: 0.5 } },
             { fn: 'set_contrast', args: { amt: 25 } },
-            { fn: 'set_crop', args: { aspect: '1:1' } }
-          ]
-        })
+            { fn: 'set_crop', args: { aspect: '1:1' } },
+          ],
+        }),
       });
 
-      const result = await planner.plan({ 
-        text: 'warmer, +0.5 ev, more contrast, crop square' 
+      const result = await planner.plan({
+        text: 'warmer, +0.5 ev, more contrast, crop square',
       });
 
       expect(result.calls).toHaveLength(4);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: 20, tint: 0 }
+        args: { temp: 20, tint: 0 },
       });
       expect(result.calls[1]).toEqual({
         fn: 'set_exposure',
-        args: { ev: 0.5 }
+        args: { ev: 0.5 },
       });
     });
 
@@ -87,9 +87,9 @@ describe('GeminiPlanner', () => {
           calls: [
             { fn: 'set_exposure', args: { ev: 10 } },
             { fn: 'set_contrast', args: { amt: 200 } },
-            { fn: 'set_white_balance_temp_tint', args: { temp: 150, tint: -150 } }
-          ]
-        })
+            { fn: 'set_white_balance_temp_tint', args: { temp: 150, tint: -150 } },
+          ],
+        }),
       });
 
       const result = await planner.plan({ text: 'extreme adjustments' });
@@ -107,9 +107,9 @@ describe('GeminiPlanner', () => {
             { fn: 'set_exposure', args: { ev: 0.5 } },
             { fn: 'unknown_function', args: {} },
             { fn: 'set_contrast' }, // Missing args
-            { fn: 'set_white_balance_temp_tint', args: { temp: 20 } } // Missing tint
-          ]
-        })
+            { fn: 'set_white_balance_temp_tint', args: { temp: 20 } }, // Missing tint
+          ],
+        }),
       });
 
       const result = await planner.plan({ text: 'various operations' });
@@ -120,9 +120,12 @@ describe('GeminiPlanner', () => {
     });
 
     it('should handle timeout and fall back to mock', async () => {
-      mockGenerateContent.mockImplementation(() => new Promise(resolve => {
-        setTimeout(() => resolve({ text: '{"calls":[]}' }), 200);
-      }));
+      mockGenerateContent.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve({ text: '{"calls":[]}' }), 200);
+          })
+      );
 
       const result = await planner.plan({ text: 'warmer' });
 
@@ -140,9 +143,9 @@ describe('GeminiPlanner', () => {
     });
 
     it('should truncate calls to maxCalls limit', async () => {
-      planner = new GeminiPlanner({ 
+      planner = new GeminiPlanner({
         apiKey: 'test-key',
-        maxCalls: 3 
+        maxCalls: 3,
       });
 
       mockGenerateContent.mockResolvedValue({
@@ -152,9 +155,9 @@ describe('GeminiPlanner', () => {
             { fn: 'set_contrast', args: { amt: 20 } },
             { fn: 'set_white_balance_temp_tint', args: { temp: 10, tint: 0 } },
             { fn: 'set_crop', args: { aspect: '16:9' } },
-            { fn: 'undo' }
-          ]
-        })
+            { fn: 'undo' },
+          ],
+        }),
       });
 
       const result = await planner.plan({ text: 'many operations' });
@@ -169,19 +172,19 @@ describe('GeminiPlanner', () => {
           name: 'test.jpg',
           w: 3000,
           h: 2000,
-          mime: 'image/jpeg'
+          mime: 'image/jpeg',
         },
         stackSummary: 'WB temp +10 • EV +0.5',
         limits: {
           temp: [-100, 100],
           ev: [-3, 3],
           contrast: [-100, 100],
-          angle: [-45, 45]
-        }
+          angle: [-45, 45],
+        },
       };
 
       mockGenerateContent.mockResolvedValue({
-        text: JSON.stringify({ calls: [] })
+        text: JSON.stringify({ calls: [] }),
       });
 
       await planner.plan({ text: 'adjust', state });
@@ -196,17 +199,17 @@ describe('GeminiPlanner', () => {
       mockGenerateContent.mockResolvedValue({
         text: JSON.stringify({
           calls: [
-            { 
-              fn: 'export_image', 
-              args: { 
+            {
+              fn: 'export_image',
+              args: {
                 dst: './output.jpg',
                 format: 'jpeg',
                 quality: 95,
-                overwrite: true
-              }
-            }
-          ]
-        })
+                overwrite: true,
+              },
+            },
+          ],
+        }),
       });
 
       const result = await planner.plan({ text: 'export to output.jpg' });
@@ -218,20 +221,16 @@ describe('GeminiPlanner', () => {
           dst: './output.jpg',
           format: 'jpeg',
           quality: 95,
-          overwrite: true
-        }
+          overwrite: true,
+        },
       });
     });
 
     it('should handle undo/redo/reset operations', async () => {
       mockGenerateContent.mockResolvedValue({
         text: JSON.stringify({
-          calls: [
-            { fn: 'undo' },
-            { fn: 'redo' },
-            { fn: 'reset' }
-          ]
-        })
+          calls: [{ fn: 'undo' }, { fn: 'redo' }, { fn: 'reset' }],
+        }),
       });
 
       const result = await planner.plan({ text: 'undo then redo then reset' });
@@ -251,7 +250,7 @@ describe('GeminiPlanner', () => {
 
     it('should handle invalid JSON response', async () => {
       mockGenerateContent.mockResolvedValue({
-        text: 'Not valid JSON at all'
+        text: 'Not valid JSON at all',
       });
 
       const result = await planner.plan({ text: 'warmer' });
@@ -261,7 +260,7 @@ describe('GeminiPlanner', () => {
 
     it('should handle missing calls array', async () => {
       mockGenerateContent.mockResolvedValue({
-        text: JSON.stringify({ notCalls: [] })
+        text: JSON.stringify({ notCalls: [] }),
       });
 
       const result = await planner.plan({ text: 'warmer' });
@@ -273,15 +272,15 @@ describe('GeminiPlanner', () => {
       mockGenerateContent.mockResolvedValue({
         text: JSON.stringify({
           calls: [
-            { 
-              fn: 'set_crop', 
-              args: { 
+            {
+              fn: 'set_crop',
+              args: {
                 aspect: '16:9',
-                angleDeg: 15 
-              }
-            }
-          ]
-        })
+                angleDeg: 15,
+              },
+            },
+          ],
+        }),
       });
 
       const result = await planner.plan({ text: 'crop 16:9 and rotate' });
@@ -290,8 +289,8 @@ describe('GeminiPlanner', () => {
         fn: 'set_crop',
         args: {
           aspect: '16:9',
-          angleDeg: 15
-        }
+          angleDeg: 15,
+        },
       });
     });
   });

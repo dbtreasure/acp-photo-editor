@@ -22,7 +22,7 @@ import { pathToFileURL } from 'url';
 
 const logger = new NdjsonLogger('agent');
 
-type Req = { id:number, method:string, params:any };
+type Req = { id: number; method: string; params: any };
 let currentSessionId: string | null = null;
 let cancelled = false;
 let mcpClients: Map<string, Client> = new Map();
@@ -44,28 +44,31 @@ let plannerConfig: {
 } = {};
 
 // Permission request tracking
-const pendingPermissions = new Map<number, {
-  resolve: (value: boolean) => void;
-  reject: (reason?: any) => void;
-  timeout: NodeJS.Timeout;
-}>();
+const pendingPermissions = new Map<
+  number,
+  {
+    resolve: (value: boolean) => void;
+    reject: (reason?: any) => void;
+    timeout: NodeJS.Timeout;
+  }
+>();
 
 // Read stdin as NDJSON
-createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
+createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
   logger.line('recv', obj);
-  
+
   // Check if this is a response to a pending permission request
   if (obj && obj.jsonrpc === '2.0' && typeof obj.id === 'number' && pendingPermissions.has(obj.id)) {
     const pending = pendingPermissions.get(obj.id)!;
     clearTimeout(pending.timeout);
     pendingPermissions.delete(obj.id);
-    
+
     // Check if permission was granted
     const approved = obj.result?.approved === true;
     pending.resolve(approved);
     return;
   }
-  
+
   if (!obj || obj.jsonrpc !== '2.0' || typeof obj.method !== 'string') return;
   const id = obj.id;
   const method = obj.method;
@@ -76,9 +79,9 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       protocolVersion: 1,
       agentCapabilities: {
         loadSession: false,
-        promptCapabilities: { image: true, audio: false, embeddedContext: false }
+        promptCapabilities: { image: true, audio: false, embeddedContext: false },
       },
-      authMethods: []
+      authMethods: [],
     };
     send({ jsonrpc: '2.0', id, result });
     return;
@@ -90,7 +93,7 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       return;
     }
     currentSessionId = `sess_${Math.random().toString(36).slice(2, 10)}`;
-    
+
     // Extract planner mode and config from params (Phase 7b)
     if (params.planner === 'off') {
       plannerMode = 'off';
@@ -99,15 +102,15 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
     } else {
       plannerMode = 'mock'; // Default to mock
     }
-    
+
     // Extract planner config options
     plannerConfig = {
       model: params.plannerModel || 'gemini-2.5-flash',
       timeout: params.plannerTimeout || 10000,
       maxCalls: params.plannerMaxCalls || 6,
-      logText: params.plannerLogText || false
+      logText: params.plannerLogText || false,
     };
-    
+
     // Connect to MCP servers if provided
     const mcpServers = params.mcpServers || [];
     if (mcpServers.length > 0) {
@@ -135,18 +138,18 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       return;
     }
     cancelled = false;
-    
+
     // Check for resource_links in the prompt
     const prompt = params.prompt || [];
     const resourceLinks = prompt.filter((block: any) => block.type === 'resource_link');
     const textBlocks = prompt.filter((block: any) => block.type === 'text');
     const text = textBlocks.length > 0 ? textBlocks[0].text : '';
-    
+
     // Log each resource_link
     resourceLinks.forEach((link: any) => {
       logger.line('info', { resource_link: link });
     });
-    
+
     // Check for :ask command (Phase 7a)
     if (text.startsWith(':ask ')) {
       handleAskCommand(text, currentSessionId, params.cwd || process.cwd(), id).then(
@@ -162,14 +165,14 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
           notify('session/update', {
             sessionId: currentSessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Error: ${err.message}` }
+            content: { type: 'text', text: `Error: ${err.message}` },
           });
           send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
         }
       );
       return;
     }
-    
+
     // Check for export command
     if (text.startsWith(':export')) {
       handleExportCommand(text, currentSessionId, params.cwd || process.cwd(), id).then(
@@ -185,18 +188,28 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
           notify('session/update', {
             sessionId: currentSessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Error: ${err.message}` }
+            content: { type: 'text', text: `Error: ${err.message}` },
           });
           send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
         }
       );
       return;
     }
-    
+
     // Check for edit commands (crop, undo, redo, reset, white balance, exposure, contrast, saturation, vibrance, auto, hist)
-    if (text.startsWith(':crop') || text === ':undo' || text === ':redo' || text === ':reset' ||
-        text.startsWith(':wb') || text.startsWith(':exposure') || text.startsWith(':contrast') ||
-        text.startsWith(':saturation') || text.startsWith(':vibrance') || text.startsWith(':auto') || text === ':hist') {
+    if (
+      text.startsWith(':crop') ||
+      text === ':undo' ||
+      text === ':redo' ||
+      text === ':reset' ||
+      text.startsWith(':wb') ||
+      text.startsWith(':exposure') ||
+      text.startsWith(':contrast') ||
+      text.startsWith(':saturation') ||
+      text.startsWith(':vibrance') ||
+      text.startsWith(':auto') ||
+      text === ':hist'
+    ) {
       handleEditCommand(text, currentSessionId).then(
         () => {
           if (!cancelled) {
@@ -210,14 +223,14 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
           notify('session/update', {
             sessionId: currentSessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Error: ${err.message}` }
+            content: { type: 'text', text: `Error: ${err.message}` },
           });
           send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
         }
       );
       return;
     }
-    
+
     // Handle resource links with MCP
     if (resourceLinks.length > 0 && mcpClients.size > 0) {
       handleResourceLinks(resourceLinks, currentSessionId).then(
@@ -234,7 +247,7 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
           notify('session/update', {
             sessionId: currentSessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Error processing resources: ${err.message}` }
+            content: { type: 'text', text: `Error processing resources: ${err.message}` },
           });
           send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
         }
@@ -244,7 +257,7 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
       Promise.resolve().then(() => {
         if (!cancelled) {
           let responseText: string;
-          
+
           if (resourceLinks.length > 0) {
             // Acknowledge resources
             const firstBasename = resourceLinks[0].name || 'unknown';
@@ -255,11 +268,11 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj:any) => {
           } else {
             responseText = `echo:${text}`;
           }
-          
+
           notify('session/update', {
             sessionId: currentSessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: responseText }
+            content: { type: 'text', text: responseText },
           });
         }
         // Then respond with stopReason
@@ -291,35 +304,40 @@ async function connectMCPServers(servers: MCPServerConfig[], cwd: string): Promi
       const args = server.args || [];
       // Pass session cwd via MCP_ROOT env var for proper sandboxing
       const env: Record<string, string> = Object.fromEntries(
-        Object.entries({ ...process.env, ...server.env, MCP_ROOT: cwd })
-          .filter(([_, v]) => v !== undefined) as [string, string][]
+        Object.entries({ ...process.env, ...server.env, MCP_ROOT: cwd }).filter(([_, v]) => v !== undefined) as [
+          string,
+          string,
+        ][]
       );
-      
+
       // Let StdioClientTransport handle spawning - no manual spawn
       const transport = new StdioClientTransport({
         command: server.command,
         args,
-        env
+        env,
       });
-      
-      const client = new Client({
-        name: `photo-agent-${server.name}`,
-        version: '0.1.0'
-      }, {
-        capabilities: {}
-      });
-      
+
+      const client = new Client(
+        {
+          name: `photo-agent-${server.name}`,
+          version: '0.1.0',
+        },
+        {
+          capabilities: {},
+        }
+      );
+
       // Connect the client (transport will spawn the process)
       await client.connect(transport);
-      
+
       // Store only the client - transport manages process lifecycle
       mcpClients.set(server.name, client);
-      
+
       logger.line('info', { mcp_server_connected: server.name });
     } catch (error: any) {
-      logger.line('error', { 
-        mcp_server_failed: server.name, 
-        error: error.message 
+      logger.line('error', {
+        mcp_server_failed: server.name,
+        error: error.message,
       });
     }
   }
@@ -331,13 +349,13 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
   if (!client) {
     throw new Error('No MCP image server available');
   }
-  
+
   for (let i = 0; i < resourceLinks.length; i++) {
     if (cancelled) break;
-    
+
     const link = resourceLinks[i];
     const toolCallId = `img_${i + 1}`;
-    
+
     // Track loaded image for edit operations
     if (link.uri && link.uri.startsWith('file://')) {
       lastLoadedImage = link.uri;
@@ -346,25 +364,25 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
         imageStacks.set(link.uri, new EditStackManager(link.uri));
       }
     }
-    
+
     // Start tool call
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
       status: 'in_progress',
-      rawInput: { uri: link.uri }
+      rawInput: { uri: link.uri },
     });
-    
+
     try {
       // Call read_image_meta
       const metaResult = await client.callTool({
         name: 'read_image_meta',
-        arguments: { uri: link.uri }
+        arguments: { uri: link.uri },
       });
-      
+
       // Find text content (human-readable metadata)
-      const metaContent = Array.isArray(metaResult.content) 
+      const metaContent = Array.isArray(metaResult.content)
         ? metaResult.content.find((c: any) => c.type === 'text')
         : null;
       if (metaContent) {
@@ -374,19 +392,21 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
           sessionUpdate: 'tool_call_update',
           toolCallId,
           status: 'in_progress',
-          content: [{
-            type: 'content',
-            content: { type: 'text', text: metaContent.text }
-          }]
+          content: [
+            {
+              type: 'content',
+              content: { type: 'text', text: metaContent.text },
+            },
+          ],
         });
       }
-      
+
       // Call render_thumbnail
       const thumbResult = await client.callTool({
         name: 'render_thumbnail',
-        arguments: { uri: link.uri, maxPx: 1024 }
+        arguments: { uri: link.uri, maxPx: 1024 },
       });
-      
+
       // Find image content
       const thumbContent = Array.isArray(thumbResult.content)
         ? thumbResult.content.find((c: any) => c.type === 'image')
@@ -398,81 +418,87 @@ async function handleResourceLinks(resourceLinks: any[], sessionId: string): Pro
           sessionUpdate: 'tool_call_update',
           toolCallId,
           status: 'in_progress',
-          content: [{
-            type: 'content',
-            content: { 
-              type: 'image', 
-              data: thumbContent.data,
-              mimeType: thumbContent.mimeType
-            }
-          }]
+          content: [
+            {
+              type: 'content',
+              content: {
+                type: 'image',
+                data: thumbContent.data,
+                mimeType: thumbContent.mimeType,
+              },
+            },
+          ],
         });
       }
-      
+
       // Mark as completed
       notify('session/update', {
         sessionId,
         sessionUpdate: 'tool_call_update',
         toolCallId,
-        status: 'completed'
+        status: 'completed',
       });
-      
     } catch (error: any) {
-      logger.line('error', { 
-        tool_call_failed: toolCallId, 
-        error: error.message 
+      logger.line('error', {
+        tool_call_failed: toolCallId,
+        error: error.message,
       });
-      
+
       // Send error update
       notify('session/update', {
         sessionId,
         sessionUpdate: 'tool_call_update',
         toolCallId,
         status: 'failed',
-        content: [{
-          type: 'content',
-          content: { 
-            type: 'text', 
-            text: `Failed to process ${link.name}: ${error.message}` 
-          }
-        }]
+        content: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: `Failed to process ${link.name}: ${error.message}`,
+            },
+          },
+        ],
       });
     }
   }
 }
 
-function send(obj:any) {
+function send(obj: any) {
   logger.line('send', obj);
   process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
-function notify(method:string, params:any) {
+function notify(method: string, params: any) {
   const msg = { jsonrpc: '2.0', method, params };
   send(msg);
 }
 
 // Helper to get image metadata with caching
-async function getImageMetadata(uri: string, client: Client): Promise<{ width: number; height: number; mimeType?: string }> {
+async function getImageMetadata(
+  uri: string,
+  client: Client
+): Promise<{ width: number; height: number; mimeType?: string }> {
   // Check cache first
   if (imageMetadataCache.has(uri)) {
     return imageMetadataCache.get(uri)!;
   }
-  
+
   try {
     const result = await client.callTool({
       name: 'read_image_meta',
-      arguments: { uri }
+      arguments: { uri },
     });
-    
+
     const content = result.content as any;
     if (content?.[0]?.type === 'text') {
       const meta = JSON.parse(content[0].text);
       const metadata = {
         width: meta.width || 0,
         height: meta.height || 0,
-        mimeType: meta.format ? `image/${meta.format.toLowerCase()}` : undefined
+        mimeType: meta.format ? `image/${meta.format.toLowerCase()}` : undefined,
       };
-      
+
       // Cache the result
       imageMetadataCache.set(uri, metadata);
       return metadata;
@@ -480,7 +506,7 @@ async function getImageMetadata(uri: string, client: Client): Promise<{ width: n
   } catch (error) {
     logger.line('error', { get_image_metadata_failed: error });
   }
-  
+
   // Return defaults if metadata fetch fails
   const defaults = { width: 0, height: 0, mimeType: 'image/jpeg' };
   imageMetadataCache.set(uri, defaults);
@@ -490,8 +516,8 @@ async function getImageMetadata(uri: string, client: Client): Promise<{ width: n
 // Map preview coordinates to original image coordinates (Phase 7c)
 // Accounts for crop and rotation transformations
 function mapPreviewToOriginal(
-  x: number, 
-  y: number, 
+  x: number,
+  y: number,
   stack: EditStack,
   originalWidth: number,
   originalHeight: number
@@ -499,98 +525,105 @@ function mapPreviewToOriginal(
   let mappedX = x;
   let mappedY = y;
   let wasClamped = false;
-  
+
   // Process operations in reverse order (undo transformations)
   const geometryOps = stack.ops.filter((op: any) => op.op === 'crop').reverse();
-  
+
   for (const op of geometryOps) {
     if (op.op === 'crop') {
       const cropOp = op as any;
-      
+
       // Handle rotation inverse
       if (cropOp.angleDeg) {
         // Rotate point back by negative angle
-        const angle = -cropOp.angleDeg * Math.PI / 180;
+        const angle = (-cropOp.angleDeg * Math.PI) / 180;
         const centerX = 0.5;
         const centerY = 0.5;
-        
+
         // Translate to origin
         const translatedX = mappedX - centerX;
         const translatedY = mappedY - centerY;
-        
+
         // Apply inverse rotation
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         const rotatedX = translatedX * cos - translatedY * sin;
         const rotatedY = translatedX * sin + translatedY * cos;
-        
+
         // Translate back
         mappedX = rotatedX + centerX;
         mappedY = rotatedY + centerY;
       }
-      
+
       // Handle crop inverse
       if (cropOp.rectNorm) {
         const [cropX, cropY, cropW, cropH] = cropOp.rectNorm;
-        
+
         // Map from cropped space back to original space
         mappedX = cropX + mappedX * cropW;
         mappedY = cropY + mappedY * cropH;
       }
     }
   }
-  
+
   // Clamp to valid range [0,1]
   if (mappedX < 0 || mappedX > 1 || mappedY < 0 || mappedY > 1) {
     wasClamped = true;
     mappedX = Math.max(0, Math.min(1, mappedX));
     mappedY = Math.max(0, Math.min(1, mappedY));
   }
-  
+
   return { x: mappedX, y: mappedY, clamped: wasClamped };
 }
 
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
   logger.line('info', { handleAskCommand_called: true, command, plannerMode });
-  
+
   // Check if planner is disabled
   if (plannerMode === 'off') {
     notify('session/update', {
       sessionId,
       sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: 'Planner disabled. Use --planner=mock or --planner=gemini to enable.' }
+      content: { type: 'text', text: 'Planner disabled. Use --planner=mock or --planner=gemini to enable.' },
     });
     return;
   }
-  
+
+  // Parse command early to check for --with-image flag
+  const hasWithImageFlag = command.includes('--with-image');
+
   // Check if we have an image loaded
   if (!lastLoadedImage) {
-    throw new Error('No image loaded. Please load an image first.');
+    if (hasWithImageFlag) {
+      throw new Error('No image loaded. Use :open <path> to load an image first, or remove --with-image flag.');
+    } else {
+      throw new Error('No image loaded. Please load an image first.');
+    }
   }
-  
+
   const stackManager = imageStacks.get(lastLoadedImage);
   if (!stackManager) {
     throw new Error('No edit stack for current image');
   }
-  
+
   const client = mcpClients.get('image');
   if (!client) {
     throw new Error('No MCP image server available');
   }
-  
+
   // Parse command for --with-image flag (Phase 7c)
   let withImage = false;
   let askText = command.substring(5).trim(); // Remove ":ask "
-  
+
   if (askText.startsWith('--with-image ')) {
     withImage = true;
     askText = askText.substring(13).trim(); // Remove flag
   }
-  
+
   if (!askText) {
     throw new Error('No text provided. Usage: :ask [--with-image] "warmer, +0.5 ev, crop square"');
   }
-  
+
   // Select planner based on configuration
   let planner: Planner;
   if (plannerMode === 'gemini') {
@@ -598,7 +631,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
   } else {
     planner = new MockPlanner();
   }
-  
+
   // Build planner state for context (Phase 7b)
   const imageMeta = await getImageMetadata(lastLoadedImage, client);
   const plannerState: GeminiPlannerState = {
@@ -606,17 +639,17 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       name: path.basename(lastLoadedImage),
       w: imageMeta.width,
       h: imageMeta.height,
-      mime: imageMeta.mimeType || 'image/jpeg'
+      mime: imageMeta.mimeType || 'image/jpeg',
     },
     stackSummary: stackManager.getStackSummary(),
     limits: {
       temp: [PLANNER_CLAMPS.temp.min, PLANNER_CLAMPS.temp.max],
       ev: [PLANNER_CLAMPS.ev.min, PLANNER_CLAMPS.ev.max],
       contrast: [PLANNER_CLAMPS.contrast.min, PLANNER_CLAMPS.contrast.max],
-      angle: [PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max]
-    }
+      angle: [PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max],
+    },
   };
-  
+
   // Capture preview image if --with-image flag is present (Phase 7c)
   let imageB64: string | undefined;
   if (withImage) {
@@ -627,20 +660,20 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         arguments: {
           uri: lastLoadedImage,
           editStack: stackManager.getStack(),
-          maxPx: 1024
-        }
+          maxPx: 1024,
+        },
       });
-      
+
       // Extract image content
       const content = previewResult.content as any;
       if (content?.[0]?.type === 'image') {
         // The image is already base64 encoded from the MCP server
         imageB64 = content[0].data;
-        
+
         // Log image capture
-        logger.line('info', { 
-          preview_captured: true, 
-          imageBytes: Math.round(imageB64!.length * 0.75) // Approximate decoded size
+        logger.line('info', {
+          preview_captured: true,
+          imageBytes: Math.round(imageB64!.length * 0.75), // Approximate decoded size
         });
       }
     } catch (error: any) {
@@ -648,35 +681,35 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       // Continue without image on error
     }
   }
-  
+
   // Plan the operations
   const startTime = Date.now();
-  const { calls, notes } = await planner.plan({ 
-    text: askText, 
+  const { calls, notes } = await planner.plan({
+    text: askText,
     state: plannerState,
-    imageB64 
+    imageB64,
   });
   const planningTime = Date.now() - startTime;
-  
+
   // Log apply result
   const stackBefore = stackManager.getStack();
   const stackHashBefore = JSON.stringify(stackBefore).length; // Simple hash
-  
+
   logger.line('info', { planner_output: { calls, notes } });
-  
+
   // Track what was clamped
   const clampedValues: string[] = [];
   const appliedOps: string[] = [];
   let hasExport = false;
-  
+
   // Process each planned call
   for (const call of calls) {
     if (cancelled) break;
-    
+
     switch (call.fn) {
       case 'set_white_balance_temp_tint': {
         const { temp, tint } = call.args;
-        
+
         // Check if we have an existing white balance operation to accumulate with
         const currentStack = stackManager.getStack();
         let lastWbOp: any = null;
@@ -687,7 +720,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
             break;
           }
         }
-        
+
         // If we have an existing temp_tint operation, add to it
         let finalTemp = temp;
         let finalTint = tint;
@@ -695,62 +728,61 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           finalTemp = (lastWbOp.temp || 0) + temp;
           finalTint = (lastWbOp.tint || 0) + tint;
         }
-        
+
         const clampedTemp = Math.max(PLANNER_CLAMPS.temp.min, Math.min(PLANNER_CLAMPS.temp.max, finalTemp));
         const clampedTint = Math.max(PLANNER_CLAMPS.tint.min, Math.min(PLANNER_CLAMPS.tint.max, finalTint));
-        
+
         if (clampedTemp !== finalTemp) {
           clampedValues.push(`temp ${finalTemp} → ${clampedTemp}`);
         }
         if (clampedTint !== finalTint) {
           clampedValues.push(`tint ${finalTint} → ${clampedTint}`);
         }
-        
+
         stackManager.addWhiteBalance({
           method: 'temp_tint',
           temp: clampedTemp,
-          tint: clampedTint
+          tint: clampedTint,
         });
-        appliedOps.push(`WB(temp ${clampedTemp > 0 ? '+' : ''}${clampedTemp} tint ${clampedTint > 0 ? '+' : ''}${clampedTint})`);
+        appliedOps.push(
+          `WB(temp ${clampedTemp > 0 ? '+' : ''}${clampedTemp} tint ${clampedTint > 0 ? '+' : ''}${clampedTint})`
+        );
         break;
       }
-      
+
       case 'set_white_balance_gray': {
         let { x, y } = call.args;
-        
+
         // Map preview coordinates to original if we're in vision mode (Phase 7c)
         if (withImage) {
           const imageMeta = await getImageMetadata(lastLoadedImage, client);
-          const mapped = mapPreviewToOriginal(
-            x, y, 
-            stackManager.getStack(),
-            imageMeta.width,
-            imageMeta.height
-          );
-          
+          const mapped = mapPreviewToOriginal(x, y, stackManager.getStack(), imageMeta.width, imageMeta.height);
+
           if (mapped.clamped) {
-            clampedValues.push(`gray_point mapped to ${mapped.x.toFixed(2)},${mapped.y.toFixed(2)} from ${x.toFixed(2)},${y.toFixed(2)}`);
+            clampedValues.push(
+              `gray_point mapped to ${mapped.x.toFixed(2)},${mapped.y.toFixed(2)} from ${x.toFixed(2)},${y.toFixed(2)}`
+            );
           }
-          
+
           x = mapped.x;
           y = mapped.y;
         }
-        
+
         const clampedX = Math.max(0, Math.min(1, x));
         const clampedY = Math.max(0, Math.min(1, y));
-        
+
         stackManager.addWhiteBalance({
           method: 'gray_point',
           x: clampedX,
-          y: clampedY
+          y: clampedY,
         });
         appliedOps.push(`WB(gray ${clampedX.toFixed(2)},${clampedY.toFixed(2)})`);
         break;
       }
-      
+
       case 'set_exposure': {
         const { ev } = call.args;
-        
+
         // Check if we have an existing exposure operation to accumulate with
         const currentStack = stackManager.getStack();
         let lastExpOp: any = null;
@@ -761,27 +793,27 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
             break;
           }
         }
-        
+
         // If we have an existing exposure operation, add to it
         let finalEv = ev;
         if (lastExpOp) {
           finalEv = (lastExpOp.ev || 0) + ev;
         }
-        
+
         const clampedEv = Math.max(PLANNER_CLAMPS.ev.min, Math.min(PLANNER_CLAMPS.ev.max, finalEv));
-        
+
         if (clampedEv !== finalEv) {
           clampedValues.push(`ev ${finalEv.toFixed(1)} → ${clampedEv.toFixed(1)}`);
         }
-        
+
         stackManager.addExposure({ ev: clampedEv });
         appliedOps.push(`EV ${clampedEv > 0 ? '+' : ''}${clampedEv.toFixed(2)}`);
         break;
       }
-      
+
       case 'set_contrast': {
         const { amt } = call.args;
-        
+
         // Check if we have an existing contrast operation to accumulate with
         const currentStack = stackManager.getStack();
         let lastContrastOp: any = null;
@@ -792,28 +824,28 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
             break;
           }
         }
-        
+
         // If we have an existing contrast operation, add to it
         let finalAmt = amt;
         if (lastContrastOp) {
           finalAmt = (lastContrastOp.amt || 0) + amt;
         }
-        
+
         const clampedAmt = Math.max(PLANNER_CLAMPS.contrast.min, Math.min(PLANNER_CLAMPS.contrast.max, finalAmt));
-        
+
         if (clampedAmt !== finalAmt) {
           clampedValues.push(`contrast ${finalAmt} → ${clampedAmt}`);
         }
-        
+
         stackManager.addContrast({ amt: clampedAmt });
         appliedOps.push(`Contrast ${clampedAmt > 0 ? '+' : ''}${clampedAmt}`);
         break;
       }
-      
+
       case 'set_crop': {
         const { aspect, rectNorm, angleDeg } = call.args;
         const options: any = {};
-        
+
         if (aspect) {
           options.aspect = aspect;
           appliedOps.push(`Crop ${aspect}`);
@@ -835,12 +867,12 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
               break;
             }
           }
-          
+
           let finalAngle = angleDeg;
           if (lastCropOp && lastCropOp.angleDeg !== undefined) {
             finalAngle = lastCropOp.angleDeg + angleDeg;
           }
-          
+
           const clampedAngle = Math.max(PLANNER_CLAMPS.angleDeg.min, Math.min(PLANNER_CLAMPS.angleDeg.max, finalAngle));
           if (clampedAngle !== finalAngle) {
             clampedValues.push(`angle ${finalAngle}° → ${clampedAngle}°`);
@@ -848,13 +880,13 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           options.angleDeg = clampedAngle;
           appliedOps.push(`Rotate ${clampedAngle.toFixed(1)}°`);
         }
-        
+
         if (Object.keys(options).length > 0) {
           stackManager.addCrop(options);
         }
         break;
       }
-      
+
       case 'undo': {
         if (stackManager.undo()) {
           appliedOps.push('Undo');
@@ -863,7 +895,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         }
         break;
       }
-      
+
       case 'redo': {
         if (stackManager.redo()) {
           appliedOps.push('Redo');
@@ -872,13 +904,13 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         }
         break;
       }
-      
+
       case 'reset': {
         stackManager.reset();
         appliedOps.push('Reset');
         break;
       }
-      
+
       case 'export_image': {
         hasExport = true;
         // Export will be handled after rendering
@@ -886,18 +918,19 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       }
     }
   }
-  
+
   // Log apply result telemetry
   const stackAfter = stackManager.getStack();
   const stackHashAfter = JSON.stringify(stackAfter).length; // Simple hash
-  logger.line('info', { event: 'apply_result',
+  logger.line('info', {
+    event: 'apply_result',
     stackHashBefore,
     stackHashAfter,
     previewMs: planningTime,
     operationsApplied: appliedOps.length,
-    valuesClamped: clampedValues.length
+    valuesClamped: clampedValues.length,
   });
-  
+
   // Build summary text
   let summaryText = '';
   if (appliedOps.length > 0) {
@@ -910,26 +943,26 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     summaryText += notes.join('\n') + '\n';
   }
   summaryText += `Stack: ${stackManager.getStackSummary()}`;
-  
+
   // Send text summary first
   notify('session/update', {
     sessionId,
     sessionUpdate: 'agent_message_chunk',
-    content: { type: 'text', text: summaryText }
+    content: { type: 'text', text: summaryText },
   });
-  
+
   // Render preview (only if we have operations)
   if (stackManager.hasOperations()) {
     const toolCallId = 'ask_render';
-    
+
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
       status: 'in_progress',
-      rawInput: { operation: 'render_preview' }
+      rawInput: { operation: 'render_preview' },
     });
-    
+
     try {
       const stack = stackManager.getStack();
       const previewResult = await client.callTool({
@@ -937,21 +970,21 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         arguments: {
           uri: lastLoadedImage,
           editStack: stack,
-          maxPx: 1024
-        }
+          maxPx: 1024,
+        },
       });
-      
+
       const content = previewResult.content as any;
       if (content?.[0]?.type === 'image') {
         const imageData = content[0].data;
         const mimeType = content[0].mimeType || 'image/png';
-        
+
         notify('session/update', {
           sessionId,
           sessionUpdate: 'tool_call_update',
           toolCallId,
           status: 'completed',
-          content: [{ type: 'image', data: imageData, mimeType }]
+          content: [{ type: 'image', data: imageData, mimeType }],
         });
       }
     } catch (error: any) {
@@ -961,17 +994,17 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         sessionUpdate: 'tool_call_update',
         toolCallId,
         status: 'failed',
-        error: { message: error.message }
+        error: { message: error.message },
       });
     }
   }
-  
+
   // Handle export if requested
   if (hasExport) {
-    const exportCall = calls.find(c => c.fn === 'export_image');
+    const exportCall = calls.find((c) => c.fn === 'export_image');
     if (exportCall) {
       const args = exportCall.args || {};
-      
+
       // Build export options
       const exportOptions: any = {
         format: args.format || 'jpeg',
@@ -979,9 +1012,9 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         chromaSubsampling: '4:2:0',
         stripExif: true,
         colorProfile: 'srgb',
-        overwrite: args.overwrite || false
+        overwrite: args.overwrite || false,
       };
-      
+
       // Determine destination path
       let dstPath: string;
       if (args.dst) {
@@ -991,22 +1024,22 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         const ext = exportOptions.format === 'png' ? '.png' : '.jpg';
         dstPath = path.resolve(cwd, 'Export', `${origName}_edit${ext}`);
       }
-      
+
       // Request permission for export
       const permId = requestId + 2000; // Use offset to avoid ID collision
       const operations: PermissionOperation[] = [
         {
           kind: 'write_file',
           uri: pathToFileURL(dstPath).href,
-          bytesApprox: 2500000 // ~2.5MB estimate
+          bytesApprox: 2500000, // ~2.5MB estimate
         },
         {
           kind: 'write_file',
           uri: pathToFileURL(dstPath + '.editstack.json').href,
-          bytesApprox: JSON.stringify(stackManager.getStack()).length + 100
-        }
+          bytesApprox: JSON.stringify(stackManager.getStack()).length + 100,
+        },
       ];
-      
+
       const permissionRequest = {
         jsonrpc: '2.0',
         id: permId,
@@ -1015,76 +1048,77 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           sessionId,
           title: 'Export edited image',
           explanation: `Write edited image to ${path.basename(dstPath)}`,
-          operations
-        }
+          operations,
+        },
       };
-      
+
       const approved = await new Promise<boolean>((resolve, reject) => {
         const timeout = setTimeout(() => {
           pendingPermissions.delete(permId);
           logger.line('info', { permission_timeout: permId });
           resolve(false); // Auto-deny on timeout
         }, 15000); // 15 second timeout
-        
+
         pendingPermissions.set(permId, { resolve, reject, timeout });
         send(permissionRequest);
       });
-      
+
       if (approved) {
         const toolCallId = 'ask_export';
-        
+
         notify('session/update', {
           sessionId,
           sessionUpdate: 'tool_call_update',
           toolCallId,
           status: 'in_progress',
-          rawInput: { operation: 'export', dst: dstPath }
+          rawInput: { operation: 'export', dst: dstPath },
         });
-        
+
         try {
           // Ensure Export directory exists
           const exportDir = path.dirname(dstPath);
           await fs.mkdir(exportDir, { recursive: true });
-          
+
           const stack = stackManager.getStack();
           const dstUri = pathToFileURL(dstPath).href;
-          
+
           const exportResult = await client.callTool({
             name: 'commit_version',
             arguments: {
               uri: lastLoadedImage,
               editStack: stack,
               dstUri,
-              ...exportOptions
-            }
+              ...exportOptions,
+            },
           });
-          
+
           // Log export result telemetry
-          logger.line('info', { event: 'export_result',
+          logger.line('info', {
+            event: 'export_result',
             destination: dstPath,
             format: exportOptions.format,
             quality: exportOptions.quality,
-            success: true
+            success: true,
           });
-          
+
           notify('session/update', {
             sessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Export complete: ${dstPath}` }
+            content: { type: 'text', text: `Export complete: ${dstPath}` },
           });
         } catch (error: any) {
           logger.line('error', { export_failed: error.message });
           notify('session/update', {
             sessionId,
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Export failed: ${error.message}` }
+            content: { type: 'text', text: `Export failed: ${error.message}` },
           });
         }
       } else {
         notify('session/update', {
           sessionId,
           sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: 'Export cancelled by user' }
+          content: { type: 'text', text: 'Export cancelled by user' },
         });
       }
     }
@@ -1093,29 +1127,29 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
 
 async function handleEditCommand(command: string, sessionId: string): Promise<void> {
   logger.line('info', { handleEditCommand_called: true, command });
-  
+
   // Check if we have an image loaded
   if (!lastLoadedImage) {
     throw new Error('No image loaded. Please load an image first.');
   }
-  
+
   const stackManager = imageStacks.get(lastLoadedImage);
   if (!stackManager) {
     throw new Error('No edit stack for current image');
   }
-  
+
   const client = mcpClients.get('image');
   if (!client) {
     throw new Error('No MCP image server available');
   }
-  
+
   // Parse command
   if (command === ':undo') {
     if (!stackManager.undo()) {
       notify('session/update', {
         sessionId,
         sessionUpdate: 'agent_message_chunk',
-        content: { type: 'text', text: 'Nothing to undo' }
+        content: { type: 'text', text: 'Nothing to undo' },
       });
       return;
     }
@@ -1124,7 +1158,7 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
       notify('session/update', {
         sessionId,
         sessionUpdate: 'agent_message_chunk',
-        content: { type: 'text', text: 'Nothing to redo' }
+        content: { type: 'text', text: 'Nothing to redo' },
       });
       return;
     }
@@ -1134,13 +1168,13 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     // Parse crop arguments
     const args = command.substring(5).trim();
     const cropOptions: any = {};
-    
+
     // Parse --aspect
     const aspectMatch = args.match(/--aspect\s+(\S+)/);
     if (aspectMatch) {
       cropOptions.aspect = aspectMatch[1];
     }
-    
+
     // Parse --rect
     const rectMatch = args.match(/--rect\s+([\d.,]+)/);
     if (rectMatch) {
@@ -1149,25 +1183,25 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         cropOptions.rectNorm = coords as [number, number, number, number];
       }
     }
-    
+
     // Parse --angle
     const angleMatch = args.match(/--angle\s+([-\d.]+)/);
     if (angleMatch) {
       cropOptions.angleDeg = parseFloat(angleMatch[1]);
     }
-    
+
     // Parse --new-op flag
     const forceNew = args.includes('--new-op');
     cropOptions.forceNew = forceNew;
-    
+
     // If aspect but no rect, we need to get image dimensions
     if (cropOptions.aspect && !cropOptions.rectNorm) {
       // Call read_image_meta to get dimensions
       const metaResult = await client.callTool({
         name: 'read_image_meta',
-        arguments: { uri: lastLoadedImage }
+        arguments: { uri: lastLoadedImage },
       });
-      
+
       // Parse dimensions from meta text
       const content = metaResult.content as any[] | undefined;
       const metaText = content?.[0]?.text || '';
@@ -1181,14 +1215,14 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         }
       }
     }
-    
+
     // Add crop operation to stack
     stackManager.addCrop(cropOptions);
   } else if (command.startsWith(':wb')) {
     // Parse white balance arguments
     const args = command.substring(3).trim();
     const wbOptions: any = {};
-    
+
     // Parse --gray point
     const grayMatch = args.match(/--gray\s+([\d.,]+)/);
     if (grayMatch) {
@@ -1199,7 +1233,7 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         wbOptions.y = coords[1];
       }
     }
-    
+
     // Parse --temp and --tint
     const tempMatch = args.match(/--temp\s+([-\d]+)/);
     const tintMatch = args.match(/--tint\s+([-\d]+)/);
@@ -1208,21 +1242,21 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
       if (tempMatch) wbOptions.temp = parseInt(tempMatch[1]);
       if (tintMatch) wbOptions.tint = parseInt(tintMatch[1]);
     }
-    
+
     // Parse --new-op flag
     wbOptions.forceNew = args.includes('--new-op');
-    
+
     if (!wbOptions.method) {
       throw new Error('White balance requires either --gray x,y or --temp/--tint');
     }
-    
+
     // Add white balance operation to stack
     stackManager.addWhiteBalance(wbOptions);
   } else if (command.startsWith(':exposure')) {
     // Parse exposure arguments
     const args = command.substring(9).trim();
     const expOptions: any = {};
-    
+
     // Parse --ev
     const evMatch = args.match(/--ev\s+([-\d.]+)/);
     if (evMatch) {
@@ -1230,17 +1264,17 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     } else {
       throw new Error('Exposure requires --ev value');
     }
-    
+
     // Parse --new-op flag
     expOptions.forceNew = args.includes('--new-op');
-    
+
     // Add exposure operation to stack
     stackManager.addExposure(expOptions);
   } else if (command.startsWith(':contrast')) {
     // Parse contrast arguments
     const args = command.substring(9).trim();
     const conOptions: any = {};
-    
+
     // Parse --amt
     const amtMatch = args.match(/--amt\s+([-\d]+)/);
     if (amtMatch) {
@@ -1248,17 +1282,17 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     } else {
       throw new Error('Contrast requires --amt value');
     }
-    
+
     // Parse --new-op flag
     conOptions.forceNew = args.includes('--new-op');
-    
+
     // Add contrast operation to stack
     stackManager.addContrast(conOptions);
   } else if (command.startsWith(':saturation')) {
     // Parse saturation arguments
     const args = command.substring(11).trim();
     const satOptions: any = {};
-    
+
     // Parse --amt
     const amtMatch = args.match(/--amt\s+([-\d]+)/);
     if (amtMatch) {
@@ -1266,17 +1300,17 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     } else {
       throw new Error('Saturation requires --amt value');
     }
-    
+
     // Parse --new-op flag
     satOptions.forceNew = args.includes('--new-op');
-    
+
     // Add saturation operation to stack
     stackManager.addSaturation(satOptions);
   } else if (command.startsWith(':vibrance')) {
     // Parse vibrance arguments
     const args = command.substring(9).trim();
     const vibOptions: any = {};
-    
+
     // Parse --amt
     const amtMatch = args.match(/--amt\s+([-\d]+)/);
     if (amtMatch) {
@@ -1284,19 +1318,19 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     } else {
       throw new Error('Vibrance requires --amt value');
     }
-    
+
     // Parse --new-op flag
     vibOptions.forceNew = args.includes('--new-op');
-    
+
     // Add vibrance operation to stack
     stackManager.addVibrance(vibOptions);
   } else if (command.startsWith(':auto')) {
     // Parse auto adjustment arguments
     const args = command.substring(5).trim();
-    
+
     // Import auto adjust functions
     const { autoWhiteBalance, autoExposure, autoContrast, autoAll } = await import('../src/autoAdjust.js');
-    
+
     if (args === 'wb') {
       // Auto white balance
       const wbOp = await autoWhiteBalance(lastLoadedImage.replace('file://', ''));
@@ -1304,49 +1338,49 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         method: wbOp.method,
         temp: wbOp.temp,
         tint: wbOp.tint,
-        forceNew: false
+        forceNew: false,
       });
     } else if (args === 'ev') {
       // Auto exposure
       const currentStack = stackManager.getStack();
-      const wbOp = currentStack.ops.find(op => op.op === 'white_balance') as any;
+      const wbOp = currentStack.ops.find((op) => op.op === 'white_balance') as any;
       const evOp = await autoExposure(lastLoadedImage.replace('file://', ''), wbOp);
       stackManager.addExposure({
         ev: evOp.ev,
-        forceNew: false
+        forceNew: false,
       });
     } else if (args === 'contrast') {
       // Auto contrast
       const currentStack = stackManager.getStack();
-      const wbOp = currentStack.ops.find(op => op.op === 'white_balance') as any;
-      const evOp = currentStack.ops.find(op => op.op === 'exposure') as any;
+      const wbOp = currentStack.ops.find((op) => op.op === 'white_balance') as any;
+      const evOp = currentStack.ops.find((op) => op.op === 'exposure') as any;
       const contrastOp = await autoContrast(lastLoadedImage.replace('file://', ''), wbOp, evOp);
       stackManager.addContrast({
         amt: contrastOp.amt,
-        forceNew: false
+        forceNew: false,
       });
     } else if (args === 'all') {
       // Auto all adjustments
       const adjustments = await autoAll(lastLoadedImage.replace('file://', ''));
-      
+
       // Apply white balance
       stackManager.addWhiteBalance({
         method: adjustments.whiteBalance.method,
         temp: adjustments.whiteBalance.temp,
         tint: adjustments.whiteBalance.tint,
-        forceNew: false
+        forceNew: false,
       });
-      
+
       // Apply exposure
       stackManager.addExposure({
         ev: adjustments.exposure.ev,
-        forceNew: false
+        forceNew: false,
       });
-      
+
       // Apply contrast
       stackManager.addContrast({
         amt: adjustments.contrast.amt,
-        forceNew: false
+        forceNew: false,
       });
     } else {
       throw new Error('Auto requires: wb, ev, contrast, or all');
@@ -1355,64 +1389,64 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
     // Compute and display histogram
     logger.line('info', { hist_command_recognized: true });
     const editStack = stackManager.getStack();
-    
+
     // Call compute_histogram tool
     const histResult = await client.callTool({
       name: 'compute_histogram',
       arguments: {
         uri: lastLoadedImage,
         editStack,
-        bins: 64
-      }
+        bins: 64,
+      },
     });
-    
+
     // Parse histogram data
     const content = histResult.content as any[] | undefined;
     const histDataText = content?.[0]?.text || '{}';
     const histData = JSON.parse(histDataText);
-    
+
     // Format and display histogram
     const { formatHistogramDisplay } = await import('../src/histogram.js');
     const histDisplay = formatHistogramDisplay(histData);
-    
+
     // Send histogram display as text
     notify('session/update', {
       sessionId,
       sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: histDisplay }
+      content: { type: 'text', text: histDisplay },
     });
-    
+
     return; // Don't render preview for histogram command
   } else {
     throw new Error(`Unknown command: ${command}`);
   }
-  
+
   // Render preview with current stack
   const toolCallId = 'edit_preview';
-  
+
   // Start tool call
   notify('session/update', {
     sessionId,
     sessionUpdate: 'tool_call_update',
     toolCallId,
     status: 'in_progress',
-    rawInput: { command }
+    rawInput: { command },
   });
-  
+
   try {
     // Get current stack
     const editStack = stackManager.getStack();
-    
+
     // Call render_preview
     const previewResult = await client.callTool({
       name: 'render_preview',
-      arguments: { 
+      arguments: {
         uri: lastLoadedImage,
         editStack,
-        maxPx: 1024
-      }
+        maxPx: 1024,
+      },
     });
-    
+
     // Send stack info
     const stackInfo = `Stack: ${stackManager.getStackSummary()}`;
     notify('session/update', {
@@ -1420,17 +1454,19 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
       sessionUpdate: 'tool_call_update',
       toolCallId,
       status: 'in_progress',
-      content: [{
-        type: 'content',
-        content: { type: 'text', text: stackInfo }
-      }]
+      content: [
+        {
+          type: 'content',
+          content: { type: 'text', text: stackInfo },
+        },
+      ],
     });
-    
+
     // Find image content
     const imageContent = Array.isArray(previewResult.content)
       ? previewResult.content.find((c: any) => c.type === 'image')
       : null;
-      
+
     if (imageContent) {
       // Send preview image
       notify('session/update', {
@@ -1438,43 +1474,46 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         sessionUpdate: 'tool_call_update',
         toolCallId,
         status: 'in_progress',
-        content: [{
-          type: 'content',
-          content: {
-            type: 'image',
-            data: imageContent.data,
-            mimeType: imageContent.mimeType
-          }
-        }]
+        content: [
+          {
+            type: 'content',
+            content: {
+              type: 'image',
+              data: imageContent.data,
+              mimeType: imageContent.mimeType,
+            },
+          },
+        ],
       });
     }
-    
+
     // Mark as completed
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
-      status: 'completed'
+      status: 'completed',
     });
-    
   } catch (error: any) {
     logger.line('error', {
-      edit_preview_failed: error.message
+      edit_preview_failed: error.message,
     });
-    
+
     // Send error update
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
       status: 'failed',
-      content: [{
-        type: 'content',
-        content: {
-          type: 'text',
-          text: `Failed to render preview: ${error.message}`
-        }
-      }]
+      content: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: `Failed to render preview: ${error.message}`,
+          },
+        },
+      ],
     });
   }
 }
@@ -1484,17 +1523,17 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
   if (!lastLoadedImage) {
     throw new Error('No image loaded. Please load an image first.');
   }
-  
+
   const stackManager = imageStacks.get(lastLoadedImage);
   if (!stackManager) {
     throw new Error('No edit stack for current image');
   }
-  
+
   const client = mcpClients.get('image');
   if (!client) {
     throw new Error('No MCP image server available');
   }
-  
+
   // Parse export arguments
   const args = command.substring(7).trim();
   const exportOptions: any = {
@@ -1503,21 +1542,21 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
     chromaSubsampling: '4:2:0',
     stripExif: true,
     colorProfile: 'srgb',
-    overwrite: false
+    overwrite: false,
   };
-  
+
   // Parse --format
   const formatMatch = args.match(/--format\s+(\S+)/);
   if (formatMatch) {
     exportOptions.format = formatMatch[1];
   }
-  
+
   // Parse --quality
   const qualityMatch = args.match(/--quality\s+(\d+)/);
   if (qualityMatch) {
     exportOptions.quality = parseInt(qualityMatch[1]);
   }
-  
+
   // Parse --dst
   let dstPath: string;
   const dstMatch = args.match(/--dst\s+(\S+)/);
@@ -1529,45 +1568,45 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
     const ext = exportOptions.format === 'png' ? '.png' : '.jpg';
     dstPath = path.resolve(cwd, 'Export', `${origName}_edit${ext}`);
   }
-  
+
   // Parse --overwrite flag
   exportOptions.overwrite = args.includes('--overwrite');
-  
+
   // Parse --batch flag
   const isBatch = args.includes('--batch');
-  
+
   if (isBatch) {
     // For batch, export all loaded images
     const allImages = Array.from(imageStacks.keys());
     if (allImages.length === 0) {
       throw new Error('No images loaded for batch export');
     }
-    
+
     // TODO: Implement batch export
     throw new Error('Batch export not yet implemented');
   }
-  
+
   // Get current edit stack
   const editStack = stackManager.getStack();
-  
+
   // Estimate file size (rough approximation)
   const bytesApprox = 2500000; // ~2.5MB estimate for edited image
   const sidecarBytesApprox = JSON.stringify(editStack).length + 100;
-  
+
   // Build permission operations
   const operations: PermissionOperation[] = [
     {
       kind: 'write_file',
       uri: pathToFileURL(dstPath).href,
-      bytesApprox
+      bytesApprox,
     },
     {
       kind: 'write_file',
       uri: pathToFileURL(dstPath + '.editstack.json').href,
-      bytesApprox: sidecarBytesApprox
-    }
+      bytesApprox: sidecarBytesApprox,
+    },
   ];
-  
+
   // Send permission request
   const permId = requestId + 1000; // Use offset to avoid ID collision
   const permissionRequest = {
@@ -1578,10 +1617,10 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
       sessionId,
       title: 'Export edited image',
       explanation: `Write edited image and edit stack to ${path.basename(dstPath)}`,
-      operations
-    }
+      operations,
+    },
   };
-  
+
   // Create promise to wait for permission response
   const granted = await new Promise<boolean>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -1589,39 +1628,41 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
       logger.line('info', { permission_timeout: permId });
       resolve(false); // Auto-deny on timeout
     }, 15000); // 15 second timeout
-    
+
     pendingPermissions.set(permId, { resolve, reject, timeout });
     send(permissionRequest);
   });
-  
+
   if (!granted) {
     throw new Error('Export cancelled: Permission denied by client');
   }
-  
+
   // Start export with progress updates - use unique ID
   const toolCallId = `export_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-  
+
   // Send initial progress
   notify('session/update', {
     sessionId,
     sessionUpdate: 'tool_call_update',
     toolCallId,
     status: 'in_progress',
-    rawInput: { command, dst: dstPath }
+    rawInput: { command, dst: dstPath },
   });
-  
+
   // Send text update about rendering
   notify('session/update', {
     sessionId,
     sessionUpdate: 'tool_call_update',
     toolCallId,
     status: 'in_progress',
-    content: [{
-      type: 'content',
-      content: { type: 'text', text: 'Rendering full resolution...' }
-    }]
+    content: [
+      {
+        type: 'content',
+        content: { type: 'text', text: 'Rendering full resolution...' },
+      },
+    ],
   });
-  
+
   try {
     // Call commit_version
     const commitResult = await client.callTool({
@@ -1635,14 +1676,14 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
         chromaSubsampling: exportOptions.chromaSubsampling,
         stripExif: exportOptions.stripExif,
         colorProfile: exportOptions.colorProfile,
-        overwrite: exportOptions.overwrite
-      }
+        overwrite: exportOptions.overwrite,
+      },
     });
-    
+
     // Parse result
     const content = commitResult.content as any[] | undefined;
     const resultData = JSON.parse(content?.[0]?.text || '{}');
-    
+
     // Write sidecar file
     const sidecarPath = dstPath + '.editstack.json';
     const sidecarContent = {
@@ -1653,45 +1694,47 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
       render: {
         format: exportOptions.format,
         quality: exportOptions.quality,
-        colorProfile: exportOptions.colorProfile
-      }
+        colorProfile: exportOptions.colorProfile,
+      },
     };
-    
+
     try {
       await fs.writeFile(sidecarPath, JSON.stringify(sidecarContent, null, 2));
     } catch (err: any) {
       logger.line('error', { sidecar_write_failed: err.message });
     }
-    
+
     // Send success summary
     const sizeKB = Math.round(resultData.bytes / 1024);
     const sizeMB = resultData.bytes / (1024 * 1024);
     const summary = `Exported: ${path.basename(dstPath)} (${resultData.width}×${resultData.height}, ${sizeKB}KB, ${resultData.format})`;
-    
+
     // Warn if file is large
     if (sizeMB > 10) {
       logger.line('info', { large_export_warning: `Exported file is ${sizeMB.toFixed(1)}MB` });
     }
-    
+
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
       status: 'in_progress',
-      content: [{
-        type: 'content',
-        content: { type: 'text', text: summary }
-      }]
+      content: [
+        {
+          type: 'content',
+          content: { type: 'text', text: summary },
+        },
+      ],
     });
-    
+
     // Mark as completed
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
-      status: 'completed'
+      status: 'completed',
     });
-    
+
     // Log export
     logger.line('info', {
       export_success: true,
@@ -1700,29 +1743,30 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
       stackHash: stackManager.computeHash(),
       elapsedMs: resultData.elapsedMs,
       bytes: resultData.bytes,
-      success: true
+      success: true,
     });
-    
   } catch (error: any) {
     logger.line('error', {
-      export_failed: error.message
+      export_failed: error.message,
     });
-    
+
     // Send error update
     notify('session/update', {
       sessionId,
       sessionUpdate: 'tool_call_update',
       toolCallId,
       status: 'failed',
-      content: [{
-        type: 'content',
-        content: {
-          type: 'text',
-          text: `Export failed: ${error.message}`
-        }
-      }]
+      content: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: `Export failed: ${error.message}`,
+          },
+        },
+      ],
     });
-    
+
     // Log failed export
     logger.line('error', {
       export_success: false,
@@ -1730,9 +1774,9 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
       dst: dstPath,
       stackHash: stackManager.computeHash(),
       error: error.message,
-      success: false
+      success: false,
     });
-    
+
     throw error;
   }
 }
@@ -1742,7 +1786,7 @@ async function handleExportCommand(command: string, sessionId: string, cwd: stri
 // Cleanup handlers for graceful shutdown
 process.on('SIGINT', async () => {
   logger.line('info', { event: 'shutdown', signal: 'SIGINT' });
-  
+
   // Close all MCP clients
   for (const [name, client] of mcpClients) {
     try {
@@ -1752,13 +1796,13 @@ process.on('SIGINT', async () => {
       logger.line('error', { event: 'mcp_client_close_failed', name, error: e });
     }
   }
-  
+
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   logger.line('info', { event: 'shutdown', signal: 'SIGTERM' });
-  
+
   // Close all MCP clients
   for (const [name, client] of mcpClients) {
     try {
@@ -1768,6 +1812,6 @@ process.on('SIGTERM', async () => {
       logger.line('error', { event: 'mcp_client_close_failed', name, error: e });
     }
   }
-  
+
   process.exit(0);
 });

@@ -28,6 +28,7 @@ npm run demo
 ## What's New in Phase 7c
 
 Phase 7c adds **vision capabilities** to the Gemini planner for intelligent white balance corrections:
+
 - **Vision Input**: Attach preview images to planner with `--with-image` flag
 - **Visual Analysis**: AI analyzes the actual image to determine color casts
 - **Smart Gray Point**: Automatically identifies neutral references in images
@@ -36,6 +37,7 @@ Phase 7c adds **vision capabilities** to the Gemini planner for intelligent whit
 - **Privacy-First**: Strips EXIF data and redacts file paths before sending
 
 ### Previous Phase 7b Features
+
 - **Gemini Planner**: Uses Google's Gemini 2.5 Flash model for NLP
 - **Structured Output**: JSON Schema validation ensures reliable responses
 - **Automatic Fallback**: Falls back to MockPlanner on errors/timeout
@@ -62,7 +64,9 @@ Phase 7c adds **vision capabilities** to the Gemini planner for intelligent whit
 ### Example Commands
 
 #### Vision Mode (Phase 7c - WB only)
+
 With `--with-image`, the AI can see your image and make intelligent corrections:
+
 ```bash
 :ask --with-image "fix the white balance"
 :ask --with-image "neutralize the color cast"
@@ -70,19 +74,23 @@ With `--with-image`, the AI can see your image and make intelligent corrections:
 ```
 
 The vision planner will:
+
 - Analyze the actual image for color casts
 - Identify neutral references (white shirts, gray concrete, etc.)
 - Choose between temp/tint or gray point methods
 - Map coordinates from preview to original image space
 
 #### Text Mode (Phase 7b)
+
 Natural language editing without vision still works for all operations:
+
 - `:ask "make it warmer and brighter with more contrast"`
 - `:ask "cool tones, lift shadows, crop to 16:9 for video"`
 - `:ask "subtle warm grade, +0.3 exposure, slight vignette"`
 - `:ask "export to ./finals/hero.jpg at 95% quality"`
 
 The Gemini planner intelligently:
+
 - Interprets semantic meaning ("warmer" → temp adjustment)
 - Applies appropriate values based on context
 - Handles multiple operations in logical order
@@ -98,6 +106,7 @@ The Gemini planner intelligently:
 ## What's New in Previous Phases
 
 Phase 6 adds advanced color operations and intelligent adjustments:
+
 - **Saturation/Vibrance**: Global color enhancement with smart protection
 - **Auto Adjustments**: Intelligent auto white balance, exposure, and contrast
 - **Histogram Analysis**: Real-time 64-bin histogram with clipping detection
@@ -106,6 +115,7 @@ Phase 6 adds advanced color operations and intelligent adjustments:
 - **Extended Pipeline**: Proper operation order for all color adjustments
 
 Phase 5 features:
+
 - **White Balance**: Gray point sampling or manual temp/tint adjustment
 - **Exposure**: EV-based brightness control (±3 stops)
 - **Contrast**: Global contrast adjustment (±100%)
@@ -114,6 +124,7 @@ Phase 5 features:
 - **Live Preview**: Real-time preview with all adjustments applied
 
 Phase 4 features:
+
 - **Full Resolution Export**: Write edited images to disk at full quality
 - **Permission Gating**: ACP session/request_permission for write operations
 - **Sidecar Persistence**: Edit stack saved as .editstack.json alongside exports
@@ -122,12 +133,14 @@ Phase 4 features:
 - **Progress Streaming**: Real-time export progress via tool_call_update
 
 Phase 3 features:
+
 - **Edit Stack v1**: Non-destructive edit operations stored per image
 - **Crop & Straighten**: Apply crop with aspect ratios and rotation angles
 - **Undo/Redo**: Full undo/redo support with edit history
 - **Live Previews**: Real-time preview generation with edits applied
 
 Previous Phase 2 features:
+
 - **MCP Image Server**: Standalone server for image operations
 - **Real Thumbnails**: Generate actual image thumbnails (1024px max)
 - **Metadata Extraction**: Get dimensions, file size, MIME type
@@ -137,6 +150,7 @@ Previous Phase 2 features:
 ## Edit Commands
 
 ### Color & Tonal Adjustments
+
 - `:wb --gray 0.42,0.37` - White balance using gray point (normalized coords)
 - `:wb --temp 18 --tint -7` - White balance using temperature/tint (-100 to 100)
 - `:exposure --ev 0.35` - Adjust exposure in EV stops (-3 to +3)
@@ -145,12 +159,14 @@ Previous Phase 2 features:
 - `:vibrance --amt 40` - Smart saturation that protects skin tones (-100 to 100)
 
 ### Auto Adjustments
+
 - `:auto wb` - Automatic white balance using gray-world algorithm
 - `:auto ev` - Automatic exposure targeting optimal median brightness
 - `:auto contrast` - Automatic contrast based on histogram percentiles
 - `:auto all` - Apply all auto adjustments in sequence (WB → EV → Contrast)
 
 ### Natural Language Editing (Phase 7a)
+
 - `:ask warmer` - Make image warmer
 - `:ask +0.5 ev, more contrast` - Multiple adjustments
 - `:ask crop square, straighten 2°` - Crop and rotate
@@ -159,24 +175,29 @@ Previous Phase 2 features:
 - `:ask export to output.jpg quality 95` - Export with options
 
 ### Analysis Tools
+
 - `:hist` - Display histogram with 64-bin sparklines and clipping percentages
 
 ### Crop & Straighten
+
 - `:crop --aspect 1:1` - Crop to aspect ratio (square, 16:9, 3:2, etc)
 - `:crop --rect 0.1,0.1,0.8,0.8` - Crop to normalized rectangle
 - `:crop --angle -2.5` - Rotate/straighten by degrees
 - `:crop --aspect 16:9 --angle 1.0` - Combined operations
 
 ### Edit History
+
 - `:undo` - Undo last edit operation
-- `:redo` - Redo previously undone operation  
+- `:redo` - Redo previously undone operation
 - `:reset` - Clear all edits
 
 ### File Operations
+
 - `:open <path>` - Load image file(s)
 - `:gallery` - Show loaded thumbnails
 
 ### Export Operations
+
 - `:export` - Export with defaults (JPEG 90, ./Export/)
 - `:export --format png` - Export as PNG
 - `:export --quality 95` - Set JPEG quality
@@ -318,6 +339,7 @@ Thumbnail Gallery:
 The MCP image server (`cmd/mcp-image-server.ts`) provides:
 
 ### Resources
+
 - `file://` URI scheme support
 - Bounded to current working directory
 - Path traversal protection
@@ -360,26 +382,31 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
 ### Color Adjustment Algorithms
 
 **White Balance**
+
 - Gray Point: Samples pixel at (x,y), calculates RGB scaling to neutralize
 - Temp/Tint: Maps [-100,100] to color channel multipliers
 - Channel gains clamped to [0.25, 4.0] to prevent extreme corrections
 
 **Exposure**
+
 - Linear scale by 2^EV (e.g., +1 EV = 2× brightness)
 - Range: ±3 EV stops
 - Applied using Sharp's modulate function
 
 **Contrast**
+
 - Global contrast around mid-tone (0.5 in display space, 128 in 8-bit)
 - Linear transformation: (input - 0.5) × factor + 0.5
 - Range: ±100% contrast adjustment
 
 **Saturation**
+
 - HSL-based saturation adjustment in sRGB space
 - Range: -100 (grayscale) to +100 (2× saturation)
 - Preserves hue and lightness, only modifies saturation channel
 
 **Vibrance**
+
 - Intelligent saturation that protects already-saturated colors
 - Attenuation factor: k = (1-S)^1.5 for gentle falloff
 - Less aggressive than saturation, preserves skin tones better
@@ -388,24 +415,28 @@ The MCP image server (`cmd/mcp-image-server.ts`) provides:
 ### Auto Adjustment Algorithms
 
 **Auto White Balance**
+
 - Gray-world algorithm on 512px downsampled image
 - Calculates mean RGB and equalizes to gray
 - Gains clamped to [0.5, 2.0] for stability
 - Converts to temp/tint parameters for consistency
 
 **Auto Exposure**
+
 - Targets median luma around 0.45 sRGB (~0.18 linear)
 - Calculates EV adjustment: log2(target/current)
 - Clamped to [-1.5, +1.5] EV to prevent over-correction
 - Applied after white balance for accurate analysis
 
 **Auto Contrast**
+
 - Analyzes 2% and 98% luma percentiles
 - Calculates stretch factor for dynamic range
 - Maps to contrast amount [-40, +40]
 - Preserves highlights and shadows while expanding midtones
 
 **Histogram Analysis**
+
 - 64-bin histograms for precise distribution analysis
 - Per-channel (R,G,B) and luma computation
 - Clipping detection with percentage reporting
@@ -429,6 +460,7 @@ The edit pipeline applies operations in a specific order to ensure correct resul
 This order ensures color adjustments are applied before geometric transformations for optimal quality.
 
 ### Supported Formats
+
 - Standard: JPEG, PNG, WebP, HEIC/HEIF, TIFF, SVG, GIF
 - File size limit: 50MB (configurable)
 - EXIF stripping for privacy
@@ -487,7 +519,9 @@ npm run interactive -- --no-mcp
 ## Troubleshooting
 
 ### Sharp Module Errors
+
 If you see "Could not load the sharp module":
+
 ```bash
 # Check Node version (needs >= 18.17.0)
 node --version
@@ -500,6 +534,7 @@ npm rebuild sharp
 ```
 
 ### MCP Connection Issues
+
 - Check logs in `logs/` directory
 - Test MCP server directly: `npm run start:mcp`
 - Verify test image exists: `ls test/assets/`
@@ -507,6 +542,7 @@ npm rebuild sharp
 ## Development
 
 ### Scripts
+
 - `npm run build` - Compile TypeScript
 - `npm run clean` - Clean build artifacts
 - `npm run start:agent` - Run agent standalone
@@ -516,6 +552,7 @@ npm rebuild sharp
 - `npm run demo:image` - Image processing demo
 
 ### Requirements
+
 - Node.js >= 18.17.0 (v20+ or v24+ recommended)
 - TypeScript 5+
 - macOS or Linux
@@ -523,6 +560,7 @@ npm rebuild sharp
 ## Phase 2a Features
 
 ✅ Phase 2:
+
 - MCP server with Resources and Tools
 - Real image metadata extraction
 - Thumbnail generation with Sharp
@@ -532,6 +570,7 @@ npm rebuild sharp
 - Graceful fallback to Phase 1
 
 ✅ Phase 2a (iTerm2 Support):
+
 - Automatic iTerm2 terminal detection
 - OSC 1337 inline image protocol
 - Tmux-safe multipart transfer (1MB chunks)
@@ -540,6 +579,7 @@ npm rebuild sharp
 - Configurable via --tty-images flag
 
 🔒 Security:
+
 - CWD-bounded file access
 - Path traversal protection
 - 50MB file size limit
@@ -549,6 +589,7 @@ npm rebuild sharp
 ## Next Phase Preview
 
 Phase 3 will add:
+
 - Non-destructive edit operations (crop, rotate)
 - Edit history/undo stack
 - Permission-gated file writes

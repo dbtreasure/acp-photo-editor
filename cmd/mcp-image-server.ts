@@ -8,13 +8,13 @@ try {
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { 
-  ListResourcesRequestSchema, 
+import {
+  ListResourcesRequestSchema,
   ReadResourceRequestSchema,
   ListToolsRequestSchema,
   CallToolRequestSchema,
   ErrorCode,
-  McpError
+  McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import sharp from 'sharp';
 import { z } from 'zod';
@@ -22,7 +22,16 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'crypto';
-import { EditStack, EditOp, CropOp, WhiteBalanceOp, ExposureOp, ContrastOp, SaturationOp, VibranceOp } from '../src/editStack.js';
+import {
+  EditStack,
+  EditOp,
+  CropOp,
+  WhiteBalanceOp,
+  ExposureOp,
+  ContrastOp,
+  SaturationOp,
+  VibranceOp,
+} from '../src/editStack.js';
 import { applyColorOperations } from '../src/imageProcessing.js';
 import { computeHistogram } from '../src/histogram.js';
 import { randomBytes } from 'crypto';
@@ -32,12 +41,12 @@ import { rename } from 'fs/promises';
 const root = process.env.MCP_ROOT || process.cwd();
 
 const ReadImageMetaArgsSchema = z.object({
-  uri: z.url()
+  uri: z.url(),
 });
 
 const RenderThumbnailArgsSchema = z.object({
   uri: z.url(),
-  maxPx: z.number().int().positive().default(1024)
+  maxPx: z.number().int().positive().default(1024),
 });
 
 const EditOpSchema = z.discriminatedUnion('op', [
@@ -47,7 +56,7 @@ const EditOpSchema = z.discriminatedUnion('op', [
     op: z.literal('crop'),
     rectNorm: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
     angleDeg: z.number().optional(),
-    aspect: z.string().optional()
+    aspect: z.string().optional(),
   }),
   // White balance operation
   z.object({
@@ -57,32 +66,32 @@ const EditOpSchema = z.discriminatedUnion('op', [
     x: z.number().min(0).max(1).optional(),
     y: z.number().min(0).max(1).optional(),
     temp: z.number().min(-100).max(100).optional(),
-    tint: z.number().min(-100).max(100).optional()
+    tint: z.number().min(-100).max(100).optional(),
   }),
   // Exposure operation
   z.object({
     id: z.string(),
     op: z.literal('exposure'),
-    ev: z.number().min(-3).max(3)
+    ev: z.number().min(-3).max(3),
   }),
   // Contrast operation
   z.object({
     id: z.string(),
     op: z.literal('contrast'),
-    amt: z.number().min(-100).max(100)
+    amt: z.number().min(-100).max(100),
   }),
   // Saturation operation
   z.object({
     id: z.string(),
     op: z.literal('saturation'),
-    amt: z.number().min(-100).max(100)
+    amt: z.number().min(-100).max(100),
   }),
   // Vibrance operation
   z.object({
     id: z.string(),
     op: z.literal('vibrance'),
-    amt: z.number().min(-100).max(100)
-  })
+    amt: z.number().min(-100).max(100),
+  }),
 ]);
 
 const RenderPreviewArgsSchema = z.object({
@@ -90,15 +99,15 @@ const RenderPreviewArgsSchema = z.object({
   editStack: z.object({
     version: z.literal(1),
     baseUri: z.string(),
-    ops: z.array(EditOpSchema)
+    ops: z.array(EditOpSchema),
   }),
-  maxPx: z.number().int().positive().default(1024)
+  maxPx: z.number().int().positive().default(1024),
 });
 
 const ComputeAspectRectArgsSchema = z.object({
   width: z.number().positive(),
   height: z.number().positive(),
-  aspect: z.string()
+  aspect: z.string(),
 });
 
 const CommitVersionArgsSchema = z.object({
@@ -106,7 +115,7 @@ const CommitVersionArgsSchema = z.object({
   editStack: z.object({
     version: z.literal(1),
     baseUri: z.string(),
-    ops: z.array(EditOpSchema)
+    ops: z.array(EditOpSchema),
   }),
   dstUri: z.url(),
   format: z.enum(['jpeg', 'png']).optional().default('jpeg'),
@@ -114,7 +123,7 @@ const CommitVersionArgsSchema = z.object({
   chromaSubsampling: z.enum(['4:4:4', '4:2:0']).optional().default('4:2:0'),
   stripExif: z.boolean().optional().default(true),
   colorProfile: z.enum(['srgb', 'displayp3']).optional().default('srgb'),
-  overwrite: z.boolean().optional().default(false)
+  overwrite: z.boolean().optional().default(false),
 });
 
 const ComputeHistogramArgsSchema = z.object({
@@ -122,9 +131,9 @@ const ComputeHistogramArgsSchema = z.object({
   editStack: z.object({
     version: z.literal(1),
     baseUri: z.string(),
-    ops: z.array(EditOpSchema)
+    ops: z.array(EditOpSchema),
   }),
-  bins: z.number().int().positive().optional().default(64)
+  bins: z.number().int().positive().optional().default(64),
 });
 
 const SUPPORTED_MIMES = new Set([
@@ -135,7 +144,7 @@ const SUPPORTED_MIMES = new Set([
   'image/heif',
   'image/tiff',
   'image/svg+xml',
-  'image/gif'
+  'image/gif',
 ]);
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -154,12 +163,9 @@ function getCacheKey(uri: string, stackHash?: string, maxPx?: number): string {
 function validatePath(filePath: string): void {
   const resolved = path.resolve(filePath);
   const relative = path.relative(root, resolved);
-  
+
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      `Path outside root directory: ${filePath}`
-    );
+    throw new McpError(ErrorCode.InvalidRequest, `Path outside root directory: ${filePath}`);
   }
 }
 
@@ -167,21 +173,21 @@ async function getMimeType(filePath: string): Promise<string> {
   try {
     // Prefer metadata-based detection for safety
     const metadata = await sharp(filePath).metadata();
-    
+
     // Map sharp format to MIME type
     const formatToMime: Record<string, string> = {
-      'jpeg': 'image/jpeg',
-      'jpg': 'image/jpeg',
-      'png': 'image/png',
-      'webp': 'image/webp',
-      'heif': 'image/heif',
-      'heic': 'image/heic',
-      'tiff': 'image/tiff',
-      'tif': 'image/tiff',
-      'svg': 'image/svg+xml',
-      'gif': 'image/gif'
+      jpeg: 'image/jpeg',
+      jpg: 'image/jpeg',
+      png: 'image/png',
+      webp: 'image/webp',
+      heif: 'image/heif',
+      heic: 'image/heic',
+      tiff: 'image/tiff',
+      tif: 'image/tiff',
+      svg: 'image/svg+xml',
+      gif: 'image/gif',
     };
-    
+
     if (metadata.format && formatToMime[metadata.format]) {
       return formatToMime[metadata.format];
     }
@@ -189,7 +195,7 @@ async function getMimeType(filePath: string): Promise<string> {
     // Fall back to extension-based detection if metadata fails
     console.error('Failed to read metadata for MIME type detection:', err);
   }
-  
+
   // Fallback to extension-based detection
   const ext = path.extname(filePath).toLowerCase();
   const mimeMap: Record<string, string> = {
@@ -202,9 +208,9 @@ async function getMimeType(filePath: string): Promise<string> {
     '.tiff': 'image/tiff',
     '.tif': 'image/tiff',
     '.svg': 'image/svg+xml',
-    '.gif': 'image/gif'
+    '.gif': 'image/gif',
   };
-  
+
   return mimeMap[ext] || 'application/octet-stream';
 }
 
@@ -216,8 +222,8 @@ const server = new Server(
   {
     capabilities: {
       resources: {},
-      tools: {}
-    }
+      tools: {},
+    },
   }
 );
 
@@ -229,51 +235,42 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
         uri: `file://${root}`,
         name: 'Session Root Images',
         description: 'Access to image files in the session root directory',
-        mimeType: 'text/plain'
-      }
-    ]
+        mimeType: 'text/plain',
+      },
+    ],
   };
 });
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
-  
+
   if (!uri.startsWith('file://')) {
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      'Only file:// URIs are supported'
-    );
+    throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
   }
-  
+
   const filePath = fileURLToPath(uri);
   validatePath(filePath);
-  
+
   const stats = await fs.stat(filePath);
   if (stats.size > MAX_FILE_SIZE) {
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`
-    );
+    throw new McpError(ErrorCode.InvalidRequest, `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`);
   }
-  
+
   const mimeType = await getMimeType(filePath);
   if (!SUPPORTED_MIMES.has(mimeType)) {
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      `Unsupported mime type: ${mimeType}`
-    );
+    throw new McpError(ErrorCode.InvalidRequest, `Unsupported mime type: ${mimeType}`);
   }
-  
+
   const contents = await fs.readFile(filePath);
-  
+
   return {
     contents: [
       {
         uri,
         mimeType,
-        blob: contents.toString('base64')
-      }
-    ]
+        blob: contents.toString('base64'),
+      },
+    ],
   };
 });
 
@@ -289,11 +286,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             uri: {
               type: 'string',
-              description: 'file:// URI to the image'
-            }
+              description: 'file:// URI to the image',
+            },
           },
-          required: ['uri']
-        }
+          required: ['uri'],
+        },
       },
       {
         name: 'render_thumbnail',
@@ -303,16 +300,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             uri: {
               type: 'string',
-              description: 'file:// URI to the image'
+              description: 'file:// URI to the image',
             },
             maxPx: {
               type: 'number',
               description: 'Maximum dimension in pixels',
-              default: 1024
-            }
+              default: 1024,
+            },
           },
-          required: ['uri']
-        }
+          required: ['uri'],
+        },
       },
       {
         name: 'render_preview',
@@ -322,7 +319,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             uri: {
               type: 'string',
-              description: 'file:// URI to the image'
+              description: 'file:// URI to the image',
             },
             editStack: {
               type: 'object',
@@ -341,25 +338,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         type: 'array',
                         items: { type: 'number' },
                         minItems: 4,
-                        maxItems: 4
+                        maxItems: 4,
                       },
                       angleDeg: { type: 'number' },
-                      aspect: { type: 'string' }
+                      aspect: { type: 'string' },
                     },
-                    required: ['id', 'op']
-                  }
-                }
+                    required: ['id', 'op'],
+                  },
+                },
               },
-              required: ['version', 'baseUri', 'ops']
+              required: ['version', 'baseUri', 'ops'],
             },
             maxPx: {
               type: 'number',
               description: 'Maximum dimension in pixels for preview',
-              default: 1024
-            }
+              default: 1024,
+            },
           },
-          required: ['uri', 'editStack']
-        }
+          required: ['uri', 'editStack'],
+        },
       },
       {
         name: 'compute_aspect_rect',
@@ -369,19 +366,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             width: {
               type: 'number',
-              description: 'Image width in pixels'
+              description: 'Image width in pixels',
             },
             height: {
               type: 'number',
-              description: 'Image height in pixels'
+              description: 'Image height in pixels',
             },
             aspect: {
               type: 'string',
-              description: 'Aspect ratio (e.g., "1:1", "16:9", "square")'
-            }
+              description: 'Aspect ratio (e.g., "1:1", "16:9", "square")',
+            },
           },
-          required: ['width', 'height', 'aspect']
-        }
+          required: ['width', 'height', 'aspect'],
+        },
       },
       {
         name: 'commit_version',
@@ -391,7 +388,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             uri: {
               type: 'string',
-              description: 'Source file:// URI'
+              description: 'Source file:// URI',
             },
             editStack: {
               type: 'object',
@@ -399,46 +396,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               properties: {
                 version: { type: 'number' },
                 baseUri: { type: 'string' },
-                ops: { type: 'array' }
+                ops: { type: 'array' },
               },
-              required: ['version', 'baseUri', 'ops']
+              required: ['version', 'baseUri', 'ops'],
             },
             dstUri: {
               type: 'string',
-              description: 'Destination file:// URI'
+              description: 'Destination file:// URI',
             },
             format: {
               type: 'string',
               enum: ['jpeg', 'png'],
-              default: 'jpeg'
+              default: 'jpeg',
             },
             quality: {
               type: 'number',
               minimum: 1,
               maximum: 100,
-              default: 90
+              default: 90,
             },
             chromaSubsampling: {
               type: 'string',
               enum: ['4:4:4', '4:2:0'],
-              default: '4:2:0'
+              default: '4:2:0',
             },
             stripExif: {
               type: 'boolean',
-              default: true
+              default: true,
             },
             colorProfile: {
               type: 'string',
               enum: ['srgb', 'displayp3'],
-              default: 'srgb'
+              default: 'srgb',
             },
             overwrite: {
               type: 'boolean',
-              default: false
-            }
+              default: false,
+            },
           },
-          required: ['uri', 'editStack', 'dstUri']
-        }
+          required: ['uri', 'editStack', 'dstUri'],
+        },
       },
       {
         name: 'compute_histogram',
@@ -448,7 +445,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             uri: {
               type: 'string',
-              description: 'file:// URI to the image'
+              description: 'file:// URI to the image',
             },
             editStack: {
               type: 'object',
@@ -456,179 +453,143 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               properties: {
                 version: { type: 'number' },
                 baseUri: { type: 'string' },
-                ops: { type: 'array' }
+                ops: { type: 'array' },
               },
-              required: ['version', 'baseUri', 'ops']
+              required: ['version', 'baseUri', 'ops'],
             },
             bins: {
               type: 'number',
               description: 'Number of histogram bins',
-              default: 64
-            }
+              default: 64,
+            },
           },
-          required: ['uri', 'editStack']
-        }
-      }
-    ]
+          required: ['uri', 'editStack'],
+        },
+      },
+    ],
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  
+
   if (name === 'read_image_meta') {
     const { uri } = ReadImageMetaArgsSchema.parse(args);
-    
+
     if (!uri.startsWith('file://')) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'Only file:// URIs are supported'
-      );
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
     }
-    
+
     const filePath = fileURLToPath(uri);
     validatePath(filePath);
-    
+
     const stats = await fs.stat(filePath);
     if (stats.size > MAX_FILE_SIZE) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`);
     }
-    
+
     const mimeType = await getMimeType(filePath);
     if (!SUPPORTED_MIMES.has(mimeType)) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Unsupported mime type: ${mimeType}`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `Unsupported mime type: ${mimeType}`);
     }
-    
+
     try {
       const metadata = await sharp(filePath).metadata();
-      
+
       const hasExif = !!metadata.exif;
       const width = metadata.width || 0;
       const height = metadata.height || 0;
       const sizeMB = (stats.size / 1024 / 1024).toFixed(1);
-      
+
       // Return human-readable metadata
       const metaText = `${path.basename(filePath)} ${width}×${height}, ${sizeMB}MB, ${mimeType}${hasExif ? ' +EXIF' : ''}`;
-      
+
       return {
         content: [
           {
             type: 'text',
-            text: metaText
-          }
-        ]
+            text: metaText,
+          },
+        ],
       };
     } catch (error: any) {
       // Re-throw as McpError for consistent error handling
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to read image metadata: ${error.message}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to read image metadata: ${error.message}`);
     }
   }
-  
+
   if (name === 'render_thumbnail') {
     const { uri, maxPx } = RenderThumbnailArgsSchema.parse(args);
-    
+
     if (!uri.startsWith('file://')) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'Only file:// URIs are supported'
-      );
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
     }
-    
+
     const filePath = fileURLToPath(uri);
     validatePath(filePath);
-    
+
     const stats = await fs.stat(filePath);
     if (stats.size > MAX_FILE_SIZE) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`);
     }
-    
+
     const mimeType = await getMimeType(filePath);
     if (!SUPPORTED_MIMES.has(mimeType)) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Unsupported mime type: ${mimeType}`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `Unsupported mime type: ${mimeType}`);
     }
-    
+
     try {
       // Render thumbnail with sharp (auto-orient for EXIF)
       const thumbnail = await sharp(filePath)
         .rotate() // Auto-rotate based on EXIF orientation
         .resize(maxPx, maxPx, {
           fit: 'inside',
-          withoutEnlargement: true
+          withoutEnlargement: true,
         })
         .png() // Always output as PNG for consistency
         .toBuffer();
-      
+
       // Return structured image content directly
       return {
         content: [
           {
             type: 'image',
             data: thumbnail.toString('base64'),
-            mimeType: 'image/png'
-          }
-        ]
+            mimeType: 'image/png',
+          },
+        ],
       };
     } catch (error: any) {
       // Re-throw as McpError for consistent error handling
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to render thumbnail: ${error.message}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to render thumbnail: ${error.message}`);
     }
   }
-  
+
   if (name === 'render_preview') {
     const { uri, editStack, maxPx } = RenderPreviewArgsSchema.parse(args);
-    
+
     if (!uri.startsWith('file://')) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'Only file:// URIs are supported'
-      );
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
     }
-    
+
     const filePath = fileURLToPath(uri);
     validatePath(filePath);
-    
+
     const stats = await fs.stat(filePath);
     if (stats.size > MAX_FILE_SIZE) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`);
     }
-    
+
     const mimeType = await getMimeType(filePath);
     if (!SUPPORTED_MIMES.has(mimeType)) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Unsupported mime type: ${mimeType}`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `Unsupported mime type: ${mimeType}`);
     }
-    
+
     // Compute cache key from stack
-    const stackHash = crypto.createHash('sha256')
-      .update(JSON.stringify(editStack.ops))
-      .digest('hex')
-      .substring(0, 16);
-    
+    const stackHash = crypto.createHash('sha256').update(JSON.stringify(editStack.ops)).digest('hex').substring(0, 16);
+
     const cacheKey = getCacheKey(uri, stackHash, maxPx);
-    
+
     // Check cache
     if (previewCache.has(cacheKey)) {
       const cached = previewCache.get(cacheKey)!;
@@ -637,83 +598,88 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: 'image',
             data: cached.toString('base64'),
-            mimeType: 'image/png'
-          }
-        ]
+            mimeType: 'image/png',
+          },
+        ],
       };
     }
-    
+
     try {
       // Start with auto-orient to handle EXIF rotation
       let pipeline = sharp(filePath).rotate(); // Auto-rotate based on EXIF
       const metadata = await sharp(filePath).metadata(); // Get original dimensions
       const originalWidth = metadata.width || 1;
       const originalHeight = metadata.height || 1;
-      
+
       // Separate operations by type (color before geometry as per PRD)
       const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp> = [];
       const geometryOps: CropOp[] = [];
-      
+
       for (const op of editStack.ops) {
-        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast' || 
-            op.op === 'saturation' || op.op === 'vibrance') {
+        if (
+          op.op === 'white_balance' ||
+          op.op === 'exposure' ||
+          op.op === 'contrast' ||
+          op.op === 'saturation' ||
+          op.op === 'vibrance'
+        ) {
           colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp);
         } else if (op.op === 'crop') {
           geometryOps.push(op as CropOp);
         }
       }
-      
+
       // Apply color operations first (white balance → exposure → contrast)
       if (colorOps.length > 0) {
         pipeline = await applyColorOperations(pipeline, colorOps, metadata);
       }
-      
+
       // Then apply geometry operations (crop, rotate)
       for (const op of geometryOps) {
         // Apply crop first if rect is specified
         if (op.rectNorm) {
           const [x, y, w, h] = op.rectNorm;
-          
+
           // Convert normalized coordinates to pixels
           const cropX = Math.round(x * originalWidth);
           const cropY = Math.round(y * originalHeight);
           const cropWidth = Math.round(w * originalWidth);
           const cropHeight = Math.round(h * originalHeight);
-          
+
           // Validate and clamp crop region
           const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
           const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
           const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
           const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
-          
+
           pipeline = pipeline.extract({
             left: safeX,
             top: safeY,
             width: safeWidth,
-            height: safeHeight
+            height: safeHeight,
           });
         }
-        
+
         // Apply rotation after crop if specified
         if (op.angleDeg !== undefined && op.angleDeg !== 0) {
           pipeline = pipeline.rotate(op.angleDeg, {
-            background: { r: 0, g: 0, b: 0, alpha: 0 }
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
           });
         }
       }
-      
+
       // Resize to preview size
       const preview = await pipeline
         .resize(maxPx, maxPx, {
           fit: 'inside',
-          withoutEnlargement: true
+          withoutEnlargement: true,
         })
         .png()
         .toBuffer();
-      
+
       // Cache the result
       previewCache.set(cacheKey, preview);
-      
+
       // Clear old cache entries if too many
       if (previewCache.size > 20) {
         const firstKey = previewCache.keys().next().value;
@@ -721,51 +687,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           previewCache.delete(firstKey);
         }
       }
-      
+
       return {
         content: [
           {
             type: 'image',
             data: preview.toString('base64'),
-            mimeType: 'image/png'
-          }
-        ]
+            mimeType: 'image/png',
+          },
+        ],
       };
     } catch (error: any) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to render preview: ${error.message}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to render preview: ${error.message}`);
     }
   }
-  
+
   if (name === 'compute_aspect_rect') {
     const { width, height, aspect } = ComputeAspectRectArgsSchema.parse(args);
-    
+
     // Parse aspect ratio
     const keywords: Record<string, string> = {
-      'square': '1:1',
-      'landscape': '3:2',
-      'portrait': '2:3',
-      'wide': '16:9',
-      'ultrawide': '21:9'
+      square: '1:1',
+      landscape: '3:2',
+      portrait: '2:3',
+      wide: '16:9',
+      ultrawide: '21:9',
     };
-    
+
     const normalized = keywords[aspect.toLowerCase()] || aspect;
     const match = normalized.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
-    
+
     if (!match) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Invalid aspect ratio: ${aspect}`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `Invalid aspect ratio: ${aspect}`);
     }
-    
+
     const targetW = parseFloat(match[1]);
     const targetH = parseFloat(match[2]);
     const targetRatio = targetW / targetH;
     const imageRatio = width / height;
-    
+
     let rectW: number, rectH: number;
     if (targetRatio > imageRatio) {
       // Target is wider - fit to width
@@ -776,11 +736,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       rectH = 1;
       rectW = targetRatio / imageRatio;
     }
-    
+
     // Center the rectangle
     const rectX = (1 - rectW) / 2;
     const rectY = (1 - rectH) / 2;
-    
+
     return {
       content: [
         {
@@ -790,51 +750,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               Number(rectX.toFixed(4)),
               Number(rectY.toFixed(4)),
               Number(rectW.toFixed(4)),
-              Number(rectH.toFixed(4))
+              Number(rectH.toFixed(4)),
             ],
-            aspect: normalized
-          })
-        }
-      ]
+            aspect: normalized,
+          }),
+        },
+      ],
     };
   }
-  
+
   if (name === 'commit_version') {
-    const { uri, editStack, dstUri, format, quality, chromaSubsampling, stripExif, colorProfile, overwrite } = 
+    const { uri, editStack, dstUri, format, quality, chromaSubsampling, stripExif, colorProfile, overwrite } =
       CommitVersionArgsSchema.parse(args);
-    
+
     const startTime = Date.now();
-    
+
     // Validate source URI
     if (!uri.startsWith('file://')) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'Only file:// URIs are supported for source'
-      );
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported for source');
     }
-    
+
     // Validate destination URI
     if (!dstUri.startsWith('file://')) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'Only file:// URIs are supported for destination'
-      );
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported for destination');
     }
-    
+
     const srcPath = fileURLToPath(uri);
     const dstPath = fileURLToPath(dstUri);
-    
+
     // Validate paths are within MCP_ROOT
     validatePath(srcPath);
     validatePath(dstPath);
-    
+
     // Warn on extension/format mismatch
     const ext = path.extname(dstPath).toLowerCase();
-    if ((format === 'jpeg' && ext !== '.jpg' && ext !== '.jpeg') || 
-        (format === 'png' && ext !== '.png')) {
-      console.error(`Warning: format '${format}' does not match extension '${ext}' in ${path.basename(dstPath)}; proceeding anyway.`);
+    if ((format === 'jpeg' && ext !== '.jpg' && ext !== '.jpeg') || (format === 'png' && ext !== '.png')) {
+      console.error(
+        `Warning: format '${format}' does not match extension '${ext}' in ${path.basename(dstPath)}; proceeding anyway.`
+      );
     }
-    
+
     // Check source file
     const srcStats = await fs.stat(srcPath);
     if (srcStats.size > MAX_FILE_SIZE) {
@@ -843,7 +798,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `Source file too large: ${srcStats.size} bytes (max ${MAX_FILE_SIZE})`
       );
     }
-    
+
     // Check if destination exists
     try {
       await fs.stat(dstPath);
@@ -857,113 +812,118 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // File doesn't exist, which is fine
       if (e.code !== 'ENOENT') throw e;
     }
-    
+
     // Ensure destination directory exists
     const dstDir = path.dirname(dstPath);
     await fs.mkdir(dstDir, { recursive: true });
-    
+
     try {
       // Start with auto-orient to handle EXIF rotation
       let pipeline = sharp(srcPath).rotate(); // Auto-rotate based on EXIF
       const metadata = await sharp(srcPath).metadata(); // Get original dimensions
       const originalWidth = metadata.width || 1;
       const originalHeight = metadata.height || 1;
-      
+
       // Separate operations by type (color before geometry as per PRD)
       const colorOps: Array<WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp> = [];
       const geometryOps: CropOp[] = [];
-      
+
       for (const op of editStack.ops) {
-        if (op.op === 'white_balance' || op.op === 'exposure' || op.op === 'contrast' || 
-            op.op === 'saturation' || op.op === 'vibrance') {
+        if (
+          op.op === 'white_balance' ||
+          op.op === 'exposure' ||
+          op.op === 'contrast' ||
+          op.op === 'saturation' ||
+          op.op === 'vibrance'
+        ) {
           colorOps.push(op as WhiteBalanceOp | ExposureOp | ContrastOp | SaturationOp | VibranceOp);
         } else if (op.op === 'crop') {
           geometryOps.push(op as CropOp);
         }
       }
-      
+
       // Apply color operations first (white balance → exposure → contrast)
       if (colorOps.length > 0) {
         pipeline = await applyColorOperations(pipeline, colorOps, metadata);
       }
-      
+
       // Then apply geometry operations (crop, rotate)
       for (const op of geometryOps) {
         // Apply crop first if rect is specified
         if (op.rectNorm) {
           const [x, y, w, h] = op.rectNorm;
-          
+
           // Convert normalized coordinates to pixels
           const cropX = Math.round(x * originalWidth);
           const cropY = Math.round(y * originalHeight);
           const cropWidth = Math.round(w * originalWidth);
           const cropHeight = Math.round(h * originalHeight);
-          
+
           // Validate and clamp crop region
           const safeX = Math.max(0, Math.min(originalWidth - 1, cropX));
           const safeY = Math.max(0, Math.min(originalHeight - 1, cropY));
           const safeWidth = Math.max(1, Math.min(originalWidth - safeX, cropWidth));
           const safeHeight = Math.max(1, Math.min(originalHeight - safeY, cropHeight));
-          
+
           pipeline = pipeline.extract({
             left: safeX,
             top: safeY,
             width: safeWidth,
-            height: safeHeight
+            height: safeHeight,
           });
         }
-        
+
         // Apply rotation after crop if specified
         if (op.angleDeg !== undefined && op.angleDeg !== 0) {
           pipeline = pipeline.rotate(op.angleDeg, {
-            background: { r: 0, g: 0, b: 0, alpha: 0 }
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
           });
         }
       }
-      
+
       // Configure output format
       if (format === 'jpeg') {
         pipeline = pipeline.jpeg({
           quality,
           chromaSubsampling: chromaSubsampling as '4:4:4' | '4:2:0',
-          force: true
+          force: true,
         });
       } else if (format === 'png') {
         pipeline = pipeline.png({
           compressionLevel: 9,
-          force: true
+          force: true,
         });
       }
-      
+
       // Remove EXIF if requested
       if (stripExif) {
         pipeline = pipeline.withMetadata({
           orientation: undefined,
           exif: {},
-          icc: colorProfile === 'srgb' ? 'sRGB' : undefined
+          icc: colorProfile === 'srgb' ? 'sRGB' : undefined,
         });
       } else {
         pipeline = pipeline.withMetadata({
           orientation: 1, // Reset orientation since we've already applied it
-          icc: colorProfile === 'srgb' ? 'sRGB' : undefined
+          icc: colorProfile === 'srgb' ? 'sRGB' : undefined,
         });
       }
-      
+
       // Generate temp filename for atomic write
       const tempPath = `${dstPath}.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
-      
+
       // Write to temp file
       await pipeline.toFile(tempPath);
-      
+
       // Get final file stats
       const finalStats = await fs.stat(tempPath);
       const finalMetadata = await sharp(tempPath).metadata();
-      
+
       // Atomic rename
       await rename(tempPath, dstPath);
-      
+
       const elapsedMs = Date.now() - startTime;
-      
+
       return {
         content: [
           {
@@ -974,10 +934,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               format,
               width: finalMetadata.width || 0,
               height: finalMetadata.height || 0,
-              elapsedMs
-            })
-          }
-        ]
+              elapsedMs,
+            }),
+          },
+        ],
       };
     } catch (error: any) {
       // Clean up temp file on error
@@ -990,73 +950,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
       } catch {}
-      
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to commit version: ${error.message}`
-      );
+
+      throw new McpError(ErrorCode.InternalError, `Failed to commit version: ${error.message}`);
     }
   }
-  
+
   if (name === 'compute_histogram') {
     const { uri, editStack, bins } = ComputeHistogramArgsSchema.parse(args);
-    
+
     if (!uri.startsWith('file://')) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'Only file:// URIs are supported'
-      );
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
     }
-    
+
     const filePath = fileURLToPath(uri);
     validatePath(filePath);
-    
+
     const stats = await fs.stat(filePath);
     if (stats.size > MAX_FILE_SIZE) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`);
     }
-    
+
     const mimeType = await getMimeType(filePath);
     if (!SUPPORTED_MIMES.has(mimeType)) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Unsupported mime type: ${mimeType}`
-      );
+      throw new McpError(ErrorCode.InvalidRequest, `Unsupported mime type: ${mimeType}`);
     }
-    
+
     try {
       // Compute histogram with the edit stack applied
       const histogramData = await computeHistogram(filePath, editStack as EditStack, bins);
-      
+
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(histogramData)
-          }
-        ]
+            text: JSON.stringify(histogramData),
+          },
+        ],
       };
     } catch (error: any) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to compute histogram: ${error.message}`
-      );
+      throw new McpError(ErrorCode.InternalError, `Failed to compute histogram: ${error.message}`);
     }
   }
-  
-  throw new McpError(
-    ErrorCode.MethodNotFound,
-    `Unknown tool: ${name}`
-  );
+
+  throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
 });
 
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  
+
   // Log to stderr so it doesn't interfere with stdio protocol
   console.error('MCP Image Server started');
 }

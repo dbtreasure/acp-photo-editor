@@ -71,7 +71,7 @@ export class EditStackManager {
     this.currentStack = {
       version: 1,
       baseUri,
-      ops: []
+      ops: [],
     };
   }
 
@@ -88,7 +88,7 @@ export class EditStackManager {
   // Validate and clamp rect coordinates
   private validateRect(rect: [number, number, number, number]): [number, number, number, number] {
     const [x, y, w, h] = rect;
-    
+
     // Clamp to [0,1] range
     const clampedX = Math.max(0, Math.min(1, x));
     const clampedY = Math.max(0, Math.min(1, y));
@@ -102,11 +102,11 @@ export class EditStackManager {
   parseAspect(aspect: string): number | null {
     // Handle common keywords
     const keywords: Record<string, string> = {
-      'square': '1:1',
-      'landscape': '3:2',
-      'portrait': '2:3',
-      'wide': '16:9',
-      'ultrawide': '21:9'
+      square: '1:1',
+      landscape: '3:2',
+      portrait: '2:3',
+      wide: '16:9',
+      ultrawide: '21:9',
     };
 
     const normalized = keywords[aspect.toLowerCase()] || aspect;
@@ -165,7 +165,7 @@ export class EditStackManager {
     const newOp: WhiteBalanceOp = {
       id: this.generateOpId(),
       op: 'white_balance',
-      method: options.method
+      method: options.method,
     };
 
     if (options.method === 'gray_point') {
@@ -187,7 +187,7 @@ export class EditStackManager {
 
     // Amend-last logic: replace most recent white_balance op unless forceNew
     const shouldAmend = !options.forceNew && this.findLastOpByType('white_balance') !== -1;
-    
+
     if (shouldAmend) {
       const idx = this.findLastOpByType('white_balance');
       this.currentStack.ops[idx] = newOp;
@@ -197,10 +197,7 @@ export class EditStackManager {
   }
 
   // Add or amend exposure operation
-  addExposure(options: {
-    ev: number;
-    forceNew?: boolean;
-  }): void {
+  addExposure(options: { ev: number; forceNew?: boolean }): void {
     // Save current state for undo
     this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
     this.redoStack = [];
@@ -208,12 +205,12 @@ export class EditStackManager {
     const newOp: ExposureOp = {
       id: this.generateOpId(),
       op: 'exposure',
-      ev: Math.max(-3, Math.min(3, options.ev)) // Clamp to [-3, 3]
+      ev: Math.max(-3, Math.min(3, options.ev)), // Clamp to [-3, 3]
     };
 
     // Amend-last logic: replace most recent exposure op unless forceNew
     const shouldAmend = !options.forceNew && this.findLastOpByType('exposure') !== -1;
-    
+
     if (shouldAmend) {
       const idx = this.findLastOpByType('exposure');
       this.currentStack.ops[idx] = newOp;
@@ -223,10 +220,7 @@ export class EditStackManager {
   }
 
   // Add or amend contrast operation
-  addContrast(options: {
-    amt: number;
-    forceNew?: boolean;
-  }): void {
+  addContrast(options: { amt: number; forceNew?: boolean }): void {
     // Save current state for undo
     this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
     this.redoStack = [];
@@ -234,12 +228,12 @@ export class EditStackManager {
     const newOp: ContrastOp = {
       id: this.generateOpId(),
       op: 'contrast',
-      amt: Math.max(-100, Math.min(100, options.amt)) // Clamp to [-100, 100]
+      amt: Math.max(-100, Math.min(100, options.amt)), // Clamp to [-100, 100]
     };
 
     // Amend-last logic: replace most recent contrast op unless forceNew
     const shouldAmend = !options.forceNew && this.findLastOpByType('contrast') !== -1;
-    
+
     if (shouldAmend) {
       const idx = this.findLastOpByType('contrast');
       this.currentStack.ops[idx] = newOp;
@@ -249,10 +243,7 @@ export class EditStackManager {
   }
 
   // Add or amend saturation operation
-  addSaturation(options: {
-    amt: number;
-    forceNew?: boolean;
-  }): void {
+  addSaturation(options: { amt: number; forceNew?: boolean }): void {
     // Save current state for undo
     this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
     this.redoStack = [];
@@ -260,12 +251,12 @@ export class EditStackManager {
     const newOp: SaturationOp = {
       id: this.generateOpId(),
       op: 'saturation',
-      amt: Math.max(-100, Math.min(100, options.amt)) // Clamp to [-100, 100]
+      amt: Math.max(-100, Math.min(100, options.amt)), // Clamp to [-100, 100]
     };
 
     // Amend-last logic: replace most recent saturation op unless forceNew
     const shouldAmend = !options.forceNew && this.findLastOpByType('saturation') !== -1;
-    
+
     if (shouldAmend) {
       const idx = this.findLastOpByType('saturation');
       this.currentStack.ops[idx] = newOp;
@@ -275,10 +266,7 @@ export class EditStackManager {
   }
 
   // Add or amend vibrance operation
-  addVibrance(options: {
-    amt: number;
-    forceNew?: boolean;
-  }): void {
+  addVibrance(options: { amt: number; forceNew?: boolean }): void {
     // Save current state for undo
     this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
     this.redoStack = [];
@@ -286,12 +274,12 @@ export class EditStackManager {
     const newOp: VibranceOp = {
       id: this.generateOpId(),
       op: 'vibrance',
-      amt: Math.max(-100, Math.min(100, options.amt)) // Clamp to [-100, 100]
+      amt: Math.max(-100, Math.min(100, options.amt)), // Clamp to [-100, 100]
     };
 
     // Amend-last logic: replace most recent vibrance op unless forceNew
     const shouldAmend = !options.forceNew && this.findLastOpByType('vibrance') !== -1;
-    
+
     if (shouldAmend) {
       const idx = this.findLastOpByType('vibrance');
       this.currentStack.ops[idx] = newOp;
@@ -323,13 +311,13 @@ export class EditStackManager {
 
     const newOp: CropOp = {
       id: this.generateOpId(),
-      op: 'crop'
+      op: 'crop',
     };
 
     if (options.rectNorm) {
       newOp.rectNorm = this.validateRect(options.rectNorm);
     }
-    
+
     if (options.angleDeg !== undefined) {
       // Normalize angle to [-180, 180]
       let angle = options.angleDeg % 360;
@@ -363,10 +351,10 @@ export class EditStackManager {
 
     // Save current state to redo stack
     this.redoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
-    
+
     // Restore previous state
     this.currentStack = this.undoStack.pop()!;
-    
+
     return true;
   }
 
@@ -378,10 +366,10 @@ export class EditStackManager {
 
     // Save current state to undo stack
     this.undoStack.push(JSON.parse(JSON.stringify(this.currentStack)));
-    
+
     // Restore next state
     this.currentStack = this.redoStack.pop()!;
-    
+
     return true;
   }
 
@@ -404,12 +392,12 @@ export class EditStackManager {
   // Get summary of full stack
   getStackSummary(): string {
     if (this.currentStack.ops.length === 0) return 'No operations';
-    
+
     const summaries: string[] = [];
-    
+
     for (const op of this.currentStack.ops) {
       let summary = '';
-      
+
       if (op.op === 'crop') {
         const cropOp = op as CropOp;
         summary = 'Crop';
@@ -439,12 +427,12 @@ export class EditStackManager {
         const vibOp = op as VibranceOp;
         summary = `Vib ${vibOp.amt > 0 ? '+' : ''}${vibOp.amt}`;
       }
-      
+
       if (summary) {
         summaries.push(summary);
       }
     }
-    
+
     return summaries.join(' • ');
   }
 
@@ -454,18 +442,18 @@ export class EditStackManager {
     if (!lastOp) return 'No operations';
 
     const parts: string[] = [lastOp.op];
-    
+
     if (lastOp.op === 'crop') {
       const cropOp = lastOp as CropOp;
       if (cropOp.rectNorm) {
         const [x, y, w, h] = cropOp.rectNorm;
         parts.push(`rect=[${x.toFixed(2)},${y.toFixed(2)},${w.toFixed(2)},${h.toFixed(2)}]`);
       }
-      
+
       if (cropOp.angleDeg !== undefined) {
         parts.push(`angle=${cropOp.angleDeg.toFixed(1)}°`);
       }
-      
+
       if (cropOp.aspect) {
         parts.push(`aspect=${cropOp.aspect}`);
       }
@@ -518,14 +506,10 @@ export class EditStackManager {
 }
 
 // Helper to merge partial crop options with defaults
-export function mergeCropOptions(
-  partial: Partial<CropOp>,
-  imageWidth: number,
-  imageHeight: number
-): CropOp {
+export function mergeCropOptions(partial: Partial<CropOp>, imageWidth: number, imageHeight: number): CropOp {
   const merged: CropOp = {
     id: partial.id || 'op_temp',
-    op: 'crop'
+    op: 'crop',
   };
 
   // If aspect is provided but no rect, compute max inscribed rect

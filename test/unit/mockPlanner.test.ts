@@ -10,7 +10,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: 20, tint: 0 }
+        args: { temp: 20, tint: 0 },
       });
     });
 
@@ -19,7 +19,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: 20, tint: 0 } // 20 + 20 - 20 = 20
+        args: { temp: 20, tint: 0 }, // 20 + 20 - 20 = 20
       });
     });
 
@@ -28,7 +28,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: -15, tint: 0 }
+        args: { temp: -15, tint: 0 },
       });
     });
 
@@ -37,7 +37,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: 30, tint: -10 }
+        args: { temp: 30, tint: -10 },
       });
     });
 
@@ -46,7 +46,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_gray',
-        args: { x: 0.5, y: 0.5 }
+        args: { x: 0.5, y: 0.5 },
       });
     });
   });
@@ -57,7 +57,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_exposure',
-        args: { ev: 0.3 }
+        args: { ev: 0.3 },
       });
     });
 
@@ -66,7 +66,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_exposure',
-        args: { ev: 1.5 }
+        args: { ev: 1.5 },
       });
     });
 
@@ -75,7 +75,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_exposure',
-        args: { ev: 0.5 }
+        args: { ev: 0.5 },
       });
     });
 
@@ -84,7 +84,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_exposure',
-        args: { ev: 1 } // 0.3 - 0.3 + 1 = 1
+        args: { ev: 1 }, // 0.3 - 0.3 + 1 = 1
       });
     });
   });
@@ -95,7 +95,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_contrast',
-        args: { amt: 20 }
+        args: { amt: 20 },
       });
     });
 
@@ -104,7 +104,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_contrast',
-        args: { amt: 20 }
+        args: { amt: 20 },
       });
     });
 
@@ -113,7 +113,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_contrast',
-        args: { amt: -30 }
+        args: { amt: -30 },
       });
     });
 
@@ -122,7 +122,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_contrast',
-        args: { amt: 45 } // 35 + 10 = 45
+        args: { amt: 45 }, // 35 + 10 = 45
       });
     });
   });
@@ -133,7 +133,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_crop',
-        args: { aspect: '1:1' }
+        args: { aspect: '1:1' },
       });
     });
 
@@ -142,7 +142,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_crop',
-        args: { aspect: '16:9' }
+        args: { aspect: '16:9' },
       });
     });
 
@@ -151,7 +151,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_crop',
-        args: { angleDeg: 1.5 }
+        args: { angleDeg: 1.5 },
       });
     });
 
@@ -160,7 +160,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_crop',
-        args: { angleDeg: -2.3 }
+        args: { angleDeg: -2.3 },
       });
     });
 
@@ -169,7 +169,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'set_crop',
-        args: { aspect: '3:2', angleDeg: 1.2 }
+        args: { aspect: '3:2', angleDeg: 1.2 },
       });
     });
   });
@@ -208,7 +208,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'export_image',
-        args: { dst: './output.jpg' }
+        args: { dst: './output.jpg' },
       });
     });
 
@@ -217,7 +217,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'export_image',
-        args: { format: 'png', quality: 95 }
+        args: { format: 'png', quality: 95 },
       });
     });
 
@@ -226,7 +226,7 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0]).toEqual({
         fn: 'export_image',
-        args: { dst: 'test.jpg', overwrite: true }
+        args: { dst: 'test.jpg', overwrite: true },
       });
     });
   });
@@ -237,19 +237,19 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(4);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: 20, tint: 0 }
+        args: { temp: 20, tint: 0 },
       });
       expect(result.calls[1]).toEqual({
         fn: 'set_exposure',
-        args: { ev: 0.5 }
+        args: { ev: 0.5 },
       });
       expect(result.calls[2]).toEqual({
         fn: 'set_contrast',
-        args: { amt: 20 }
+        args: { amt: 20 },
       });
       expect(result.calls[3]).toEqual({
         fn: 'set_crop',
-        args: { aspect: '1:1' }
+        args: { aspect: '1:1' },
       });
     });
 
@@ -258,16 +258,16 @@ describe('MockPlanner', () => {
       expect(result.calls).toHaveLength(3);
       expect(result.calls[0]).toEqual({
         fn: 'set_white_balance_temp_tint',
-        args: { temp: -15, tint: 0 }
+        args: { temp: -15, tint: 0 },
       });
       expect(result.calls[1]).toEqual({
         fn: 'set_contrast',
-        args: { amt: -10 }
+        args: { amt: -10 },
       });
       // Note: crop combines aspect and angle
       expect(result.calls[2]).toEqual({
         fn: 'set_crop',
-        args: { aspect: '16:9', angleDeg: 1.2 }
+        args: { aspect: '16:9', angleDeg: 1.2 },
       });
     });
 
@@ -281,7 +281,7 @@ describe('MockPlanner', () => {
   describe('Operation Ordering', () => {
     it('should place color operations before geometry operations', () => {
       const result = planner.plan({ text: 'crop square, warmer, contrast 10, straighten 2' });
-      
+
       // Should reorder to: warmer, contrast, then crop
       expect(result.calls).toHaveLength(3);
       expect(result.calls[0].fn).toBe('set_white_balance_temp_tint');
@@ -293,7 +293,7 @@ describe('MockPlanner', () => {
 
     it('should combine multiple crop operations into one', () => {
       const result = planner.plan({ text: '16:9, straighten 2, straighten 3' });
-      
+
       expect(result.calls).toHaveLength(1);
       expect(result.calls[0].fn).toBe('set_crop');
       expect((result.calls[0] as any).args.aspect).toBe('16:9');

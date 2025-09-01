@@ -27,7 +27,7 @@ describe('EditStackManager', () => {
   describe('crop operations', () => {
     it('should add crop with rect', () => {
       manager.addCrop({
-        rectNorm: [0.1, 0.2, 0.5, 0.6]
+        rectNorm: [0.1, 0.2, 0.5, 0.6],
       });
 
       const stack = manager.getStack();
@@ -40,7 +40,7 @@ describe('EditStackManager', () => {
 
     it('should clamp rect coordinates to valid range', () => {
       manager.addCrop({
-        rectNorm: [-0.1, 1.5, 2.0, 0.5]
+        rectNorm: [-0.1, 1.5, 2.0, 0.5],
       });
 
       const stack = manager.getStack();
@@ -54,7 +54,7 @@ describe('EditStackManager', () => {
 
     it('should add crop with angle', () => {
       manager.addCrop({
-        angleDeg: 45.5
+        angleDeg: 45.5,
       });
 
       const stack = manager.getStack();
@@ -64,7 +64,7 @@ describe('EditStackManager', () => {
 
     it('should normalize angle to [-180, 180]', () => {
       manager.addCrop({
-        angleDeg: 270
+        angleDeg: 270,
       });
 
       const stack = manager.getStack();
@@ -74,7 +74,7 @@ describe('EditStackManager', () => {
 
     it('should add crop with aspect', () => {
       manager.addCrop({
-        aspect: '16:9'
+        aspect: '16:9',
       });
 
       const stack = manager.getStack();
@@ -109,7 +109,7 @@ describe('EditStackManager', () => {
   describe('aspect ratio calculations', () => {
     it('should parse aspect ratio strings', () => {
       expect(manager.parseAspect('1:1')).toBe(1);
-      expect(manager.parseAspect('16:9')).toBeCloseTo(16/9);
+      expect(manager.parseAspect('16:9')).toBeCloseTo(16 / 9);
       expect(manager.parseAspect('3:2')).toBe(1.5);
       expect(manager.parseAspect('4.5:3')).toBe(1.5);
     });
@@ -117,9 +117,9 @@ describe('EditStackManager', () => {
     it('should handle aspect keywords', () => {
       expect(manager.parseAspect('square')).toBe(1);
       expect(manager.parseAspect('landscape')).toBe(1.5);
-      expect(manager.parseAspect('portrait')).toBeCloseTo(2/3);
-      expect(manager.parseAspect('wide')).toBeCloseTo(16/9);
-      expect(manager.parseAspect('ultrawide')).toBeCloseTo(21/9);
+      expect(manager.parseAspect('portrait')).toBeCloseTo(2 / 3);
+      expect(manager.parseAspect('wide')).toBeCloseTo(16 / 9);
+      expect(manager.parseAspect('ultrawide')).toBeCloseTo(21 / 9);
     });
 
     it('should return null for invalid aspect', () => {
@@ -131,12 +131,12 @@ describe('EditStackManager', () => {
     it('should compute max inscribed rect for square', () => {
       const rect = manager.computeAspectRect(1920, 1080, '1:1');
       expect(rect).not.toBeNull();
-      
+
       if (rect) {
         const [x, y, w, h] = rect;
         // For a square crop in a 16:9 image, height should be 1 and width should be 9/16
         expect(h).toBe(1);
-        expect(w).toBeCloseTo(1080/1920); // 0.5625
+        expect(w).toBeCloseTo(1080 / 1920); // 0.5625
         expect(x).toBeCloseTo((1 - w) / 2);
         expect(y).toBe(0);
       }
@@ -145,11 +145,11 @@ describe('EditStackManager', () => {
     it('should compute max inscribed rect for wide aspect', () => {
       const rect = manager.computeAspectRect(1000, 1000, '16:9');
       expect(rect).not.toBeNull();
-      
+
       if (rect) {
         const [x, y, w, h] = rect;
         expect(w).toBe(1);
-        expect(h).toBeCloseTo(9/16);
+        expect(h).toBeCloseTo(9 / 16);
         expect(x).toBe(0);
         expect(y).toBeCloseTo((1 - h) / 2);
       }
@@ -166,7 +166,7 @@ describe('EditStackManager', () => {
     it('should undo last operation', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       expect(manager.getStackLength()).toBe(1);
-      
+
       const undone = manager.undo();
       expect(undone).toBe(true);
       expect(manager.getStackLength()).toBe(0);
@@ -179,7 +179,7 @@ describe('EditStackManager', () => {
     it('should redo previously undone operation', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       manager.undo();
-      
+
       const redone = manager.redo();
       expect(redone).toBe(true);
       expect(manager.getStackLength()).toBe(1);
@@ -193,7 +193,7 @@ describe('EditStackManager', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       manager.undo();
       manager.addCrop({ angleDeg: 15 });
-      
+
       expect(manager.redo()).toBe(false);
     });
 
@@ -201,16 +201,16 @@ describe('EditStackManager', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8], forceNew: true });
       manager.addCrop({ angleDeg: 15, forceNew: true });
       manager.addCrop({ aspect: '16:9', forceNew: true });
-      
+
       expect(manager.getStackLength()).toBe(3);
-      
+
       manager.undo();
       manager.undo();
       expect(manager.getStackLength()).toBe(1);
-      
+
       manager.redo();
       expect(manager.getStackLength()).toBe(2);
-      
+
       manager.redo();
       expect(manager.getStackLength()).toBe(3);
     });
@@ -220,7 +220,7 @@ describe('EditStackManager', () => {
     it('should clear all operations', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       manager.addCrop({ angleDeg: 15, forceNew: true });
-      
+
       manager.reset();
       expect(manager.getStackLength()).toBe(0);
       expect(manager.hasOperations()).toBe(false);
@@ -229,7 +229,7 @@ describe('EditStackManager', () => {
     it('should allow undo after reset', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       manager.reset();
-      
+
       const undone = manager.undo();
       expect(undone).toBe(true);
       expect(manager.getStackLength()).toBe(1);
@@ -241,9 +241,9 @@ describe('EditStackManager', () => {
       manager.addCrop({
         rectNorm: [0.1, 0.2, 0.8, 0.6],
         angleDeg: -1.5,
-        aspect: '16:9'
+        aspect: '16:9',
       });
-      
+
       const summary = manager.getLastOpSummary();
       expect(summary).toContain('crop');
       expect(summary).toContain('rect=[0.10,0.20,0.80,0.60]');
@@ -254,21 +254,21 @@ describe('EditStackManager', () => {
     it('should compute consistent hash', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       const hash1 = manager.computeHash();
-      
+
       const manager2 = new EditStackManager(testUri);
       manager2.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       const hash2 = manager2.computeHash();
-      
+
       expect(hash1).toBe(hash2);
     });
 
     it('should compute different hash for different operations', () => {
       manager.addCrop({ rectNorm: [0.1, 0.1, 0.8, 0.8] });
       const hash1 = manager.computeHash();
-      
+
       manager.addCrop({ angleDeg: 15 });
       const hash2 = manager.computeHash();
-      
+
       expect(hash1).not.toBe(hash2);
     });
   });
@@ -278,7 +278,7 @@ describe('EditStackManager', () => {
       manager.addWhiteBalance({
         method: 'gray_point',
         x: 0.5,
-        y: 0.3
+        y: 0.3,
       });
 
       const stack = manager.getStack();
@@ -294,7 +294,7 @@ describe('EditStackManager', () => {
       manager.addWhiteBalance({
         method: 'gray_point',
         x: 1.5,
-        y: -0.2
+        y: -0.2,
       });
 
       const stack = manager.getStack();
@@ -307,7 +307,7 @@ describe('EditStackManager', () => {
       manager.addWhiteBalance({
         method: 'temp_tint',
         temp: 20,
-        tint: -10
+        tint: -10,
       });
 
       const stack = manager.getStack();
@@ -321,7 +321,7 @@ describe('EditStackManager', () => {
       manager.addWhiteBalance({
         method: 'temp_tint',
         temp: 150,
-        tint: -120
+        tint: -120,
       });
 
       const stack = manager.getStack();
@@ -490,13 +490,13 @@ describe('EditStackManager', () => {
     it('should undo color operations', () => {
       manager.addWhiteBalance({ method: 'gray_point', x: 0.5, y: 0.5 });
       manager.addExposure({ ev: 1 });
-      
+
       expect(manager.getStackLength()).toBe(2);
-      
+
       manager.undo();
       expect(manager.getStackLength()).toBe(1);
       expect(manager.getStack().ops[0].op).toBe('white_balance');
-      
+
       manager.undo();
       expect(manager.getStackLength()).toBe(0);
     });
@@ -506,13 +506,13 @@ describe('EditStackManager', () => {
       manager.addExposure({ ev: 1 });
       manager.undo();
       manager.undo();
-      
+
       expect(manager.getStackLength()).toBe(0);
-      
+
       manager.redo();
       expect(manager.getStackLength()).toBe(1);
       expect(manager.getStack().ops[0].op).toBe('white_balance');
-      
+
       manager.redo();
       expect(manager.getStackLength()).toBe(2);
       expect(manager.getStack().ops[1].op).toBe('exposure');

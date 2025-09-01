@@ -1,4 +1,3 @@
-
 export type InitializeParams = {
   protocolVersion: number;
   clientCapabilities?: any;
@@ -16,8 +15,8 @@ export type MCPServerConfig = {
   env?: Record<string, string>;
 };
 
-export type SessionNewParams = { 
-  cwd: string; 
+export type SessionNewParams = {
+  cwd: string;
   mcpServers: MCPServerConfig[];
 };
 export type SessionNewResult = { sessionId: string };
@@ -26,15 +25,15 @@ export type ContentBlockText = { type: 'text'; text: string };
 
 export type ContentBlockImage = {
   type: 'image';
-  data: string;      // base64 encoded image
-  mimeType: string;  // e.g., 'image/png'
+  data: string; // base64 encoded image
+  mimeType: string; // e.g., 'image/png'
 };
 
 export type ContentBlockResourceLink = {
   type: 'resource_link';
-  uri: string;            // e.g., file:///…/peppers.jpg
-  name?: string;          // optional display name
-  mimeType?: string;      // best-effort guess, optional
+  uri: string; // e.g., file:///…/peppers.jpg
+  name?: string; // optional display name
+  mimeType?: string; // best-effort guess, optional
 };
 
 export type ContentBlock = ContentBlockText | ContentBlockImage;

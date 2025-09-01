@@ -26,7 +26,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
 
     // Start agent process
     agent = spawn('node', [path.join('dist', 'cmd', 'photo-agent.js')], {
-      stdio: ['pipe', 'pipe', 'inherit']
+      stdio: ['pipe', 'pipe', 'inherit'],
     });
 
     peer = new JsonRpcPeer(
@@ -38,7 +38,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
     // Initialize
     const initRes = await peer.request('initialize', {
       protocolVersion: 1,
-      clientCapabilities: {}
+      clientCapabilities: {},
     });
     expect(initRes.protocolVersion).toBe(1);
 
@@ -54,26 +54,26 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
           name: 'image',
           command: 'node',
           args: [path.join('dist', 'cmd', 'mcp-image-server.js')],
-          env: {}
-        }
-      ]
+          env: {},
+        },
+      ],
     });
     sessionId = sessionRes.sessionId;
 
     // Wait for MCP servers to connect
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   });
 
   afterAll(async () => {
     if (agent) {
       agent.kill();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   });
 
   it('should handle natural language editing with Gemini', async () => {
     const updates: any[] = [];
-    
+
     peer.on('session/update', (params: any) => {
       updates.push(params);
     });
@@ -81,10 +81,12 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
     // Load test image first
     const loadRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: `:load ${testImagePath}` 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: `:load ${testImagePath}`,
+        },
+      ],
     });
     expect(loadRes.stopReason).toBe('end_turn');
 
@@ -94,27 +96,26 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
     // Send natural language command
     const promptRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: ':ask "make it warmer, increase exposure by 0.5, add more contrast, and crop to square"' 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: ':ask "make it warmer, increase exposure by 0.5, add more contrast, and crop to square"',
+        },
+      ],
     });
 
     expect(promptRes.stopReason).toBe('end_turn');
 
     // Verify we got updates
-    const textUpdates = updates.filter(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
-    
+    const textUpdates = updates.filter((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
+
     expect(textUpdates.length).toBeGreaterThan(0);
-    
+
     // Check that operations were applied
-    const summaryText = textUpdates.map(u => u.content.text).join('');
+    const summaryText = textUpdates.map((u) => u.content.text).join('');
     expect(summaryText).toMatch(/Applied:/);
     expect(summaryText).toMatch(/Stack:/);
-    
+
     // Verify specific operations were recognized
     expect(summaryText).toMatch(/WB\(temp/i);
     expect(summaryText).toMatch(/EV/);
@@ -124,7 +125,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
 
   it('should clamp extreme values', async () => {
     const updates: any[] = [];
-    
+
     peer.on('session/update', (params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
@@ -133,21 +134,20 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
 
     const promptRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: ':ask "set exposure to 10 ev and contrast to 200"' 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: ':ask "set exposure to 10 ev and contrast to 200"',
+        },
+      ],
     });
 
     expect(promptRes.stopReason).toBe('end_turn');
 
-    const textUpdates = updates.filter(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
-    
-    const summaryText = textUpdates.map(u => u.content.text).join('');
-    
+    const textUpdates = updates.filter((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
+
+    const summaryText = textUpdates.map((u) => u.content.text).join('');
+
     // Should show clamped values
     expect(summaryText).toMatch(/Clamped:/);
     expect(summaryText).toMatch(/EV.*3\.0/); // Max EV is 3
@@ -156,7 +156,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
 
   it('should handle export command', async () => {
     const updates: any[] = [];
-    
+
     peer.on('session/update', (params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
@@ -166,29 +166,28 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
     // Send export command
     const promptRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: ':ask "export to ./test-output.jpg with quality 95"' 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: ':ask "export to ./test-output.jpg with quality 95"',
+        },
+      ],
     });
 
     expect(promptRes.stopReason).toBe('end_turn');
 
     // Should either request permission or indicate export
-    const textUpdates = updates.filter(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
-    
-    const summaryText = textUpdates.map(u => u.content.text).join('');
-    
+    const textUpdates = updates.filter((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
+
+    const summaryText = textUpdates.map((u) => u.content.text).join('');
+
     // Export should be mentioned in output
     expect(summaryText.toLowerCase()).toMatch(/export/);
   });
 
   it('should provide helpful notes about unsupported operations', async () => {
     const updates: any[] = [];
-    
+
     peer.on('session/update', (params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
@@ -198,21 +197,20 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
     // Request unsupported operations
     const promptRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: ':ask "add split toning, apply a vintage filter, and remove red eye"' 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: ':ask "add split toning, apply a vintage filter, and remove red eye"',
+        },
+      ],
     });
 
     expect(promptRes.stopReason).toBe('end_turn');
 
-    const textUpdates = updates.filter(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
-    
-    const summaryText = textUpdates.map(u => u.content.text).join('');
-    
+    const textUpdates = updates.filter((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
+
+    const summaryText = textUpdates.map((u) => u.content.text).join('');
+
     // Should indicate some operations were not supported
     // Gemini should still try to apply any recognized operations
     // or provide a note about what wasn't possible
@@ -238,10 +236,10 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
     // Start agent without API key
     const env = { ...process.env };
     delete env.GEMINI_API_KEY;
-    
+
     agent = spawn('node', [path.join('dist', 'cmd', 'photo-agent.js')], {
       stdio: ['pipe', 'pipe', 'inherit'],
-      env
+      env,
     });
 
     peer = new JsonRpcPeer(
@@ -253,7 +251,7 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
     // Initialize
     const initRes = await peer.request('initialize', {
       protocolVersion: 1,
-      clientCapabilities: {}
+      clientCapabilities: {},
     });
     expect(initRes.protocolVersion).toBe(1);
 
@@ -266,32 +264,32 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
           name: 'image',
           command: 'node',
           args: [path.join('dist', 'cmd', 'mcp-image-server.js')],
-          env: {}
-        }
-      ]
+          env: {},
+        },
+      ],
     });
     sessionId = sessionRes.sessionId;
 
     // Wait for MCP servers
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Load image
     await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: `:load ${testImagePath}` }]
+      prompt: [{ type: 'text', text: `:load ${testImagePath}` }],
     });
   });
 
   afterAll(async () => {
     if (agent) {
       agent.kill();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   });
 
   it('should fall back to mock planner when no API key', async () => {
     const updates: any[] = [];
-    
+
     peer.on('session/update', (params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
@@ -300,24 +298,23 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
 
     const promptRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: ':ask "warmer and brighter"' 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: ':ask "warmer and brighter"',
+        },
+      ],
     });
 
     expect(promptRes.stopReason).toBe('end_turn');
 
-    const textUpdates = updates.filter(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
-    
-    const summaryText = textUpdates.map(u => u.content.text).join('');
-    
+    const textUpdates = updates.filter((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
+
+    const summaryText = textUpdates.map((u) => u.content.text).join('');
+
     // Should indicate fallback to mock
     expect(summaryText).toMatch(/fell back to mock|fallback/i);
-    
+
     // But should still apply operations
     expect(summaryText).toMatch(/Applied:/);
     expect(summaryText).toMatch(/WB\(temp.*20/); // Mock applies +20 for "warmer"
@@ -331,7 +328,7 @@ describe('Phase 7b: Planner disabled mode', () => {
 
   beforeAll(async () => {
     agent = spawn('node', [path.join('dist', 'cmd', 'photo-agent.js')], {
-      stdio: ['pipe', 'pipe', 'inherit']
+      stdio: ['pipe', 'pipe', 'inherit'],
     });
 
     peer = new JsonRpcPeer(
@@ -343,14 +340,14 @@ describe('Phase 7b: Planner disabled mode', () => {
     // Initialize
     await peer.request('initialize', {
       protocolVersion: 1,
-      clientCapabilities: {}
+      clientCapabilities: {},
     });
 
     // Create session with planner disabled
     const sessionRes = await peer.request('session/new', {
       cwd: process.cwd(),
       planner: 'off',
-      mcpServers: []
+      mcpServers: [],
     });
     sessionId = sessionRes.sessionId;
   });
@@ -363,7 +360,7 @@ describe('Phase 7b: Planner disabled mode', () => {
 
   it('should indicate planner is disabled', async () => {
     const updates: any[] = [];
-    
+
     peer.on('session/update', (params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
@@ -372,19 +369,18 @@ describe('Phase 7b: Planner disabled mode', () => {
 
     const promptRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ 
-        type: 'text', 
-        text: ':ask "make it warmer"' 
-      }]
+      prompt: [
+        {
+          type: 'text',
+          text: ':ask "make it warmer"',
+        },
+      ],
     });
 
     expect(promptRes.stopReason).toBe('end_turn');
 
-    const textUpdates = updates.filter(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
-    
+    const textUpdates = updates.filter((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
+
     expect(textUpdates.length).toBeGreaterThan(0);
     const text = textUpdates[0].content.text;
     expect(text).toMatch(/Planner disabled/);

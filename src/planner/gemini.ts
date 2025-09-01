@@ -4,12 +4,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { Planner, PlannerInput, PlannerOutput, PlannedCall } from './types';
 import { MockPlanner } from './mock';
-import { 
-  TOOL_CATALOG_DESCRIPTION,
-  PLANNER_RESPONSE_SCHEMA,
-  validateAndClampCall,
-  getClampedValues 
-} from './tools';
+import { TOOL_CATALOG_DESCRIPTION, PLANNER_RESPONSE_SCHEMA, validateAndClampCall, getClampedValues } from './tools';
 import { NdjsonLogger } from '../common/logger';
 
 const logger = new NdjsonLogger('gemini-planner');
@@ -43,7 +38,7 @@ export class GeminiPlanner implements Planner {
   private client: GoogleGenAI | null = null;
   private mockFallback: MockPlanner;
   private config: Required<GeminiPlannerConfig>;
-  
+
   constructor(config: GeminiPlannerConfig = {}) {
     this.config = {
       apiKey: config.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
@@ -51,198 +46,194 @@ export class GeminiPlanner implements Planner {
       timeout: config.timeout || 60000,
       maxCalls: config.maxCalls || 6,
       temperature: config.temperature || 0,
-      logText: config.logText || false
+      logText: config.logText || false,
     };
-    
+
     this.mockFallback = new MockPlanner();
-    
+
     if (this.config.apiKey) {
       this.client = new GoogleGenAI({ apiKey: this.config.apiKey });
     }
   }
-  
+
   async plan(input: PlannerInput): Promise<PlannerOutput> {
     const startTime = Date.now();
     const hasVision = !!input.imageB64;
-    
+
     // Log planner start
-    logger.line('info', { event: 'planner_start',
+    logger.line('info', {
+      event: 'planner_start',
       kind: 'gemini',
       vision: hasVision,
       model: this.config.model,
       textLen: input.text.length,
       timeoutMs: this.config.timeout,
       hasState: !!input.state,
-      imageBytes: hasVision ? Math.round(input.imageB64!.length * 0.75) : undefined
+      imageBytes: hasVision ? Math.round(input.imageB64!.length * 0.75) : undefined,
     });
-    
+
     // Check if API key is available
     if (!this.client) {
-      logger.line('info', { event: 'planner_fallback',
-        to: 'mock',
-        reason: 'no_api_key'
-      });
+      logger.line('info', { event: 'planner_fallback', to: 'mock', reason: 'no_api_key' });
       const result = this.mockFallback.plan(input);
       return {
         ...result,
-        notes: [...(result.notes || []), 'Planner fell back to mock (no API key).']
+        notes: [...(result.notes || []), 'Planner fell back to mock (no API key).'],
       };
     }
-    
+
     try {
       // Create the system prompt (vision-specific for Phase 7c if image present)
-      const systemPrompt = hasVision 
-        ? this.buildVisionSystemPrompt(input.state)
-        : this.buildSystemPrompt(input.state);
-      
+      const systemPrompt = hasVision ? this.buildVisionSystemPrompt(input.state) : this.buildSystemPrompt(input.state);
+
       // Create the user prompt with context
       const userPrompt = this.buildUserPrompt(input.text, input.state);
-      
+
       // Make the API call with retry logic
       const fullPrompt = `${systemPrompt}\n\nUser request: ${userPrompt}`;
-      
+
       let response;
       let lastError;
       const maxRetries = 3;
-      
+
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         // Create AbortController for timeout (per attempt)
         const controller = new AbortController();
-        const timeoutId = this.config.timeout > 0 ? 
-          setTimeout(() => controller.abort(), this.config.timeout) : null;
-        
+        const timeoutId = this.config.timeout > 0 ? setTimeout(() => controller.abort(), this.config.timeout) : null;
+
         try {
           // Build content parts based on whether we have vision
-          const contentParts = hasVision ? [
-            { text: fullPrompt },
-            { 
-              inlineData: {
-                mimeType: 'image/jpeg',
-                data: input.imageB64!
-              }
-            }
-          ] : [{ text: fullPrompt }];
-          
+          const contentParts = hasVision
+            ? [
+                { text: fullPrompt },
+                {
+                  inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: input.imageB64!,
+                  },
+                },
+              ]
+            : [{ text: fullPrompt }];
+
           response = await this.client.models.generateContent({
             model: this.config.model,
-            contents: [
-              { role: 'user', parts: contentParts }
-            ],
+            contents: [{ role: 'user', parts: contentParts }],
             config: {
               temperature: this.config.temperature,
-              responseMimeType: 'application/json'
+              responseMimeType: 'application/json',
               // Don't use responseSchema - it requires full property definitions
               // Let Gemini return freeform JSON and we'll validate it ourselves
               // Note: signal is not supported by @google/genai, timeout handled via AbortController
-            }
+            },
           });
-          
+
           // Clear timeout if successful
           if (timeoutId) clearTimeout(timeoutId);
           break; // Success, exit retry loop
-          
         } catch (err: any) {
           // Clear timeout on error
           if (timeoutId) clearTimeout(timeoutId);
-          
+
           lastError = err;
-          
+
           // Check if it was aborted due to timeout
           if (err.name === 'AbortError') {
             lastError = new Error('timeout');
           }
-          
+
           // Check if we should retry
-          const isRetryable = err.message?.includes('429') || 
-                             err.message?.includes('503') ||
-                             err.message?.includes('rate') ||
-                             err.status === 429 || 
-                             err.status === 503;
-          
+          const isRetryable =
+            err.message?.includes('429') ||
+            err.message?.includes('503') ||
+            err.message?.includes('rate') ||
+            err.status === 429 ||
+            err.status === 503;
+
           if (isRetryable && attempt < maxRetries - 1) {
             // Exponential backoff: 1s, 2s, 4s
             const delay = Math.pow(2, attempt) * 1000;
-            logger.line('info', { event: 'planner_retry', 
-              attempt: attempt + 1, 
-              delay,
-              error: err.message 
-            });
-            await new Promise(resolve => setTimeout(resolve, delay));
+            logger.line('info', { event: 'planner_retry', attempt: attempt + 1, delay, error: err.message });
+            await new Promise((resolve) => setTimeout(resolve, delay));
             continue;
           }
-          
+
           // No more retries, throw the error
           throw lastError;
         }
       }
-      
+
       if (!response) {
         throw lastError || new Error('Failed to get response from Gemini');
       }
-      
+
       let responseText = response.text || '';
-      
-      // Log raw response for debugging
-      console.log('[Gemini] Raw response:', responseText);
-      
+
+      // Log raw response length for telemetry
+
       // Strip markdown code blocks if present (Gemini sometimes wraps JSON in ```json...```)
-      responseText = responseText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
-      
+      responseText = responseText
+        .replace(/^```(?:json)?\s*\n?/, '')
+        .replace(/\n?```\s*$/, '')
+        .trim();
+
       // Parse the JSON response
       const parsed = JSON.parse(responseText);
-      console.log('[Gemini] Parsed response:', JSON.stringify(parsed));
-      
+
       if (!parsed || !Array.isArray(parsed.calls)) {
         throw new Error('Invalid response structure');
       }
-      
+
       // Validate and clamp calls
       const validCalls: PlannedCall[] = [];
       const droppedCalls: string[] = [];
       const clampedValues: string[] = [];
-      
+
       for (const call of parsed.calls.slice(0, this.config.maxCalls)) {
         // Normalize the call format (Gemini may return tool_name/parameters instead of fn/args)
         const normalizedCall = {
           fn: call.fn || call.tool_name || call.function,
-          args: call.args || call.parameters || call.arguments
+          args: call.args || call.parameters || call.arguments,
         };
-        
+
         // Log each call for debugging
-        logger.line('info', { event: 'processing_call', call: JSON.stringify(call), hasVision, normalized: JSON.stringify(normalizedCall) });
-        
+        logger.line('info', {
+          event: 'processing_call',
+          call: JSON.stringify(call),
+          hasVision,
+          normalized: JSON.stringify(normalizedCall),
+        });
+
         // Phase 7c: In vision mode, only allow WB operations
         if (hasVision && !normalizedCall.fn?.startsWith('set_white_balance')) {
-          console.log('[Gemini] Dropped non-WB call in vision mode:', JSON.stringify(normalizedCall));
-          logger.line('info', { event: 'dropped_non_wb', call: JSON.stringify(normalizedCall) });
+          logger.line('info', { event: 'dropped_non_wb', fn: normalizedCall.fn });
           droppedCalls.push(normalizedCall.fn || 'unknown');
           continue;
         }
-        
+
         const validated = validateAndClampCall(normalizedCall);
         if (validated) {
           validCalls.push(validated);
-          
+
           // Check if values were clamped
           const clamped = getClampedValues(normalizedCall, validated);
           clampedValues.push(...clamped);
         } else {
-          console.log('[Gemini] Dropped invalid call:', JSON.stringify(normalizedCall));
-          logger.line('info', { event: 'dropped_invalid', call: JSON.stringify(normalizedCall) });
+          logger.line('info', { event: 'dropped_invalid', fn: normalizedCall.fn });
           droppedCalls.push(normalizedCall.fn || 'unknown');
         }
       }
-      
+
       // Log planner result
       const latencyMs = Date.now() - startTime;
-      logger.line('info', { event: 'planner_result',
+      logger.line('info', {
+        event: 'planner_result',
         calls: validCalls.length,
         dropped: droppedCalls.length,
         clamped: clampedValues.length,
         latencyMs,
-        originalCallCount: parsed.calls.length
+        originalCallCount: parsed.calls.length,
       });
-      
+
       // Build notes
       const notes: string[] = [];
       if (droppedCalls.length > 0) {
@@ -254,37 +245,36 @@ export class GeminiPlanner implements Planner {
       if (parsed.calls.length > this.config.maxCalls) {
         notes.push(`Truncated to ${this.config.maxCalls} calls (from ${parsed.calls.length})`);
       }
-      
+
       return { calls: validCalls, notes };
-      
     } catch (error: any) {
-      // LOG THE ACTUAL FUCKING ERROR
-      console.error('[GEMINI ACTUAL ERROR]:', error);
-      console.error('[GEMINI ERROR MESSAGE]:', error.message);
-      console.error('[GEMINI ERROR STACK]:', error.stack);
-      
       // Log fallback
-      const reason = error.message === 'timeout' ? 'timeout' :
-                     error.message?.includes('rate') ? 'rate_limit' :
-                     error.message?.includes('network') ? 'network_error' :
-                     'api_error';
-      
-      logger.line('info', { event: 'planner_fallback',
+      const reason =
+        error.message === 'timeout'
+          ? 'timeout'
+          : error.message?.includes('rate')
+            ? 'rate_limit'
+            : error.message?.includes('network')
+              ? 'network_error'
+              : 'api_error';
+
+      logger.line('info', {
+        event: 'planner_fallback',
         to: 'mock',
         reason,
         error: error.message,
-        latencyMs: Date.now() - startTime
+        latencyMs: Date.now() - startTime,
       });
-      
+
       // Fall back to mock planner
       const result = this.mockFallback.plan(input);
       return {
         ...result,
-        notes: [...(result.notes || []), `Planner fell back to mock (${reason}).`]
+        notes: [...(result.notes || []), `Planner fell back to mock (${reason}).`],
       };
     }
   }
-  
+
   private buildSystemPrompt(state?: PlannerState): string {
     return `<role>
 You are an expert photo editing assistant that translates natural language requests into precise technical operations.
@@ -479,9 +469,13 @@ When processing a request, follow this chain of thought:
 </example>
 </examples>
 
-${state ? `<current_state>
+${
+  state
+    ? `<current_state>
 ${this.buildStateContext(state)}
-</current_state>` : ''}
+</current_state>`
+    : ''
+}
 
 <output_requirements>
 - Return ONLY valid JSON, no markdown, no explanations
@@ -493,19 +487,19 @@ ${this.buildStateContext(state)}
 - When in doubt, prefer conservative values over extreme ones
 </output_requirements>`;
   }
-  
+
   private buildUserPrompt(text: string, state?: PlannerState): string {
     // Redact file paths for privacy
     const redactedText = text.replace(/\/[^\s]+\.(jpg|jpeg|png|tiff|webp)/gi, '[image]');
-    
+
     if (this.config.logText) {
       logger.line('info', { event: 'planner_text', original: text, redacted: redactedText });
     }
-    
+
     if (!state) {
       return redactedText;
     }
-    
+
     return JSON.stringify({
       user: redactedText,
       state: {
@@ -515,12 +509,12 @@ ${this.buildStateContext(state)}
           temp: state.limits.temp,
           ev: state.limits.ev,
           contrast: state.limits.contrast,
-          angle: state.limits.angle
-        }
-      }
+          angle: state.limits.angle,
+        },
+      },
     });
   }
-  
+
   private buildStateContext(state: PlannerState): string {
     return `
 Current image state:
@@ -534,7 +528,7 @@ Current image state:
   * Rotation: ${state.limits.angle[0]}° to ${state.limits.angle[1]}°
   * Quality: 1 to 100`;
   }
-  
+
   private buildVisionSystemPrompt(state?: PlannerState): string {
     return `<role>
 You are an expert photo editing assistant with visual analysis capabilities.
@@ -579,9 +573,13 @@ In Phase 7c, you can ONLY propose white balance adjustments.
 7. For magenta casts: use negative tint values
 </decision_logic>
 
-${state ? `<current_state>
+${
+  state
+    ? `<current_state>
 ${this.buildStateContext(state)}
-</current_state>` : ''}
+</current_state>`
+    : ''
+}
 
 <output_requirements>
 - Return ONLY valid JSON: {"calls": [array of operations]}

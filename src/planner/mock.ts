@@ -15,7 +15,7 @@ export class MockPlanner implements Planner {
     let totalAngle = 0;
 
     // Split text into tokens for processing
-    const tokens = text.split(/[\s,;]+/).filter(t => t.length > 0);
+    const tokens = text.split(/[\s,;]+/).filter((t) => t.length > 0);
     let i = 0;
 
     while (i < tokens.length) {
@@ -42,8 +42,7 @@ export class MockPlanner implements Planner {
       } else if (token === 'tint' && nextToken && this.isNumberWithSign(nextToken)) {
         totalTint += Number(nextToken);
         i += 2;
-      } else if ((token === 'neutral' && nextToken === 'wb') || 
-                 (token === 'auto' && nextToken === 'wb')) {
+      } else if ((token === 'neutral' && nextToken === 'wb') || (token === 'auto' && nextToken === 'wb')) {
         calls.push({ fn: 'set_white_balance_gray', args: { x: 0.5, y: 0.5 } });
         i += 2;
       }
@@ -136,13 +135,13 @@ export class MockPlanner implements Planner {
       else if (token === 'export' || token === 'save') {
         const exportArgs: any = {};
         i++;
-        
+
         // Look for "to <path>"
         if (tokens[i] === 'to' && tokens[i + 1]) {
           exportArgs.dst = tokens[i + 1];
           i += 2;
         }
-        
+
         // Look for format
         while (i < tokens.length) {
           if (tokens[i] === 'as' && tokens[i + 1]) {
@@ -160,7 +159,7 @@ export class MockPlanner implements Planner {
             break;
           }
         }
-        
+
         calls.push({ fn: 'export_image', args: Object.keys(exportArgs).length > 0 ? exportArgs : undefined });
       }
       // Unknown token
@@ -175,14 +174,14 @@ export class MockPlanner implements Planner {
 
     // Add accumulated adjustments as operations - BEFORE crop operations
     const finalCalls: PlannedCall[] = [];
-    
+
     // Add non-crop operations first
     for (const call of calls) {
       if (call.fn !== 'set_crop') {
         finalCalls.push(call);
       }
     }
-    
+
     // Add accumulated adjustments
     if (totalTemp !== 0 || totalTint !== 0) {
       finalCalls.push({ fn: 'set_white_balance_temp_tint', args: { temp: totalTemp, tint: totalTint } });
@@ -193,9 +192,9 @@ export class MockPlanner implements Planner {
     if (totalContrast !== 0) {
       finalCalls.push({ fn: 'set_contrast', args: { amt: totalContrast } });
     }
-    
+
     // Add crop operations last (combine with angle if needed)
-    const cropCalls = calls.filter(c => c.fn === 'set_crop');
+    const cropCalls = calls.filter((c) => c.fn === 'set_crop');
     if (cropCalls.length > 0 || totalAngle !== 0) {
       if (cropCalls.length > 0) {
         const lastCrop = cropCalls[cropCalls.length - 1] as any;
@@ -207,7 +206,7 @@ export class MockPlanner implements Planner {
         finalCalls.push({ fn: 'set_crop', args: { angleDeg: totalAngle } });
       }
     }
-    
+
     // Replace calls with finalCalls
     calls.length = 0;
     calls.push(...finalCalls);

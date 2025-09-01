@@ -15,38 +15,40 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
   beforeAll(async () => {
     // Spawn agent process
     agentProc = spawn('node', ['dist/cmd/photo-agent.js'], {
-      stdio: ['pipe', 'pipe', 'inherit']
+      stdio: ['pipe', 'pipe', 'inherit'],
     });
-    
+
     peer = new JsonRpcPeer(agentProc.stdout, agentProc.stdin, null as any);
-    
+
     // Initialize
     const initRes = await peer.request('initialize', {
       protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } }
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
     });
     expect(initRes.protocolVersion).toBe(1);
-    
+
     // Create session with mock planner enabled
     const newRes = await peer.request('session/new', {
       cwd: process.cwd(),
       planner: 'mock',
-      mcpServers: [{
-        name: 'image',
-        command: 'node',
-        args: [path.join(process.cwd(), 'dist/cmd/mcp-image-server.js')],
-        env: {}
-      }]
+      mcpServers: [
+        {
+          name: 'image',
+          command: 'node',
+          args: [path.join(process.cwd(), 'dist/cmd/mcp-image-server.js')],
+          env: {},
+        },
+      ],
     });
     sessionId = newRes.sessionId;
-    
+
     // Wait for MCP server connection
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     // Load test image
     const loadRes = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'resource_link', uri: testImageUri }]
+      prompt: [{ type: 'resource_link', uri: testImageUri }],
     });
     expect(loadRes.stopReason).toBe('end_turn');
   });
@@ -60,19 +62,16 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
   it('should handle basic :ask command with multiple operations', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     const result = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask warmer, +0.5 ev, more contrast, crop square' }]
+      prompt: [{ type: 'text', text: ':ask warmer, +0.5 ev, more contrast, crop square' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
+
     // Check for text summary update
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Applied:');
     expect(textUpdate.content.text).toContain('WB(temp +20');
@@ -80,30 +79,24 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
     expect(textUpdate.content.text).toContain('Contrast +20');
     expect(textUpdate.content.text).toContain('Crop 1:1');
     expect(textUpdate.content.text).toContain('Stack:');
-    
+
     // Check for image preview update
-    const imageUpdate = updates.find(u => 
-      u.sessionUpdate === 'tool_call_update' && 
-      u.content?.[0]?.type === 'image'
-    );
+    const imageUpdate = updates.find((u) => u.sessionUpdate === 'tool_call_update' && u.content?.[0]?.type === 'image');
     expect(imageUpdate).toBeDefined();
   });
 
   it('should handle clamping and report clamped values', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     const result = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask cool by 200, ev 10, contrast 150' }]
+      prompt: [{ type: 'text', text: ':ask cool by 200, ev 10, contrast 150' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Clamped:');
     expect(textUpdate.content.text).toContain('temp -200 → -100');
@@ -114,34 +107,31 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
   it('should handle cumulative behavior across commands', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     // First, reset the stack
     await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':reset' }]
+      prompt: [{ type: 'text', text: ':reset' }],
     });
-    
+
     // First warmer command
     await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask warmer' }]
+      prompt: [{ type: 'text', text: ':ask warmer' }],
     });
-    
+
     // Clear updates
     updates.length = 0;
-    
+
     // Second warmer command - should accumulate
     const result = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask warmer' }]
+      prompt: [{ type: 'text', text: ':ask warmer' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Stack:');
     expect(textUpdate.content.text).toContain('WB(temp 40'); // Should be +40, not +20
@@ -150,25 +140,22 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
   it('should handle amend-last within single command', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     // First, reset the stack
     await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':reset' }]
+      prompt: [{ type: 'text', text: ':reset' }],
     });
-    
+
     // Apply two contrast adjustments in one command - MockPlanner accumulates
     const result = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask contrast 35, contrast 10' }]
+      prompt: [{ type: 'text', text: ':ask contrast 35, contrast 10' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Stack: Contrast +45'); // MockPlanner accumulates within command
   });
@@ -176,18 +163,15 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
   it('should handle undo/redo/reset commands', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     const result = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask undo undo redo reset' }]
+      prompt: [{ type: 'text', text: ':ask undo undo redo reset' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Applied: Undo, Undo, Redo, Reset');
     expect(textUpdate.content.text).toContain('Stack: No operations');
@@ -196,18 +180,15 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
   it('should report ignored terms', async () => {
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     const result = await peer.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: ':ask warmer, foo, bar, contrast 10' }]
+      prompt: [{ type: 'text', text: ':ask warmer, foo, bar, contrast 10' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Ignored terms: foo, bar');
   });
@@ -217,35 +198,34 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
     const newRes = await peer.request('session/new', {
       cwd: process.cwd(),
       planner: 'off',
-      mcpServers: [{
-        name: 'image',
-        command: 'node',
-        args: [path.join(process.cwd(), 'dist/cmd/mcp-image-server.js')],
-        env: {}
-      }]
+      mcpServers: [
+        {
+          name: 'image',
+          command: 'node',
+          args: [path.join(process.cwd(), 'dist/cmd/mcp-image-server.js')],
+          env: {},
+        },
+      ],
     });
     const offSessionId = newRes.sessionId;
-    
+
     // Load image first
     await peer.request('session/prompt', {
       sessionId: offSessionId,
-      prompt: [{ type: 'resource_link', uri: testImageUri }]
+      prompt: [{ type: 'resource_link', uri: testImageUri }],
     });
-    
+
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     const result = await peer.request('session/prompt', {
       sessionId: offSessionId,
-      prompt: [{ type: 'text', text: ':ask warmer' }]
+      prompt: [{ type: 'text', text: ':ask warmer' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Planner disabled');
   });
@@ -255,29 +235,28 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
     const newRes = await peer.request('session/new', {
       cwd: process.cwd(),
       planner: 'mock',
-      mcpServers: [{
-        name: 'image',
-        command: 'node',
-        args: [path.join(process.cwd(), 'dist/cmd/mcp-image-server.js')],
-        env: {}
-      }]
+      mcpServers: [
+        {
+          name: 'image',
+          command: 'node',
+          args: [path.join(process.cwd(), 'dist/cmd/mcp-image-server.js')],
+          env: {},
+        },
+      ],
     });
     const noImageSessionId = newRes.sessionId;
-    
+
     const updates: any[] = [];
     peer.on('session/update', (params) => updates.push(params));
-    
+
     const result = await peer.request('session/prompt', {
       sessionId: noImageSessionId,
-      prompt: [{ type: 'text', text: ':ask warmer' }]
+      prompt: [{ type: 'text', text: ':ask warmer' }],
     });
-    
+
     expect(result.stopReason).toBe('end_turn');
-    
-    const textUpdate = updates.find(u => 
-      u.sessionUpdate === 'agent_message_chunk' && 
-      u.content?.type === 'text'
-    );
+
+    const textUpdate = updates.find((u) => u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text');
     expect(textUpdate).toBeDefined();
     expect(textUpdate.content.text).toContain('Error');
     expect(textUpdate.content.text).toContain('No image loaded');

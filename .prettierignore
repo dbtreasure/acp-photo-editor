@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js
+*.d.ts
+
+# Logs
+logs/
+*.log
+*.ndjson
+
+# Test coverage
+coverage/
+.vitest/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Package files
+package-lock.json
+
+# Test fixtures and transcripts
+test/fixtures/
+transcripts/
+
+# Export directory
+Export/
+
+# MCP directory
+mcp/
+
+# Git
+.git/

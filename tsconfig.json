@@ -9,9 +9,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": [
-    "cmd/**/*.ts",
-    "src/**/*.ts",
-    "test/**/*.ts"
-  ]
+  "include": ["cmd/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }
