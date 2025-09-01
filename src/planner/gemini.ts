@@ -63,14 +63,17 @@ export class GeminiPlanner implements Planner {
   
   async plan(input: PlannerInput): Promise<PlannerOutput> {
     const startTime = Date.now();
+    const hasVision = !!input.imageB64;
     
     // Log planner start
     logger.line('info', { event: 'planner_start',
       kind: 'gemini',
+      vision: hasVision,
       model: this.config.model,
       textLen: input.text.length,
       timeoutMs: this.config.timeout,
-      hasState: !!input.state
+      hasState: !!input.state,
+      imageBytes: hasVision ? Math.round(input.imageB64!.length * 0.75) : undefined
     });
     
     // Check if API key is available
@@ -87,8 +90,10 @@ export class GeminiPlanner implements Planner {
     }
     
     try {
-      // Create the system prompt
-      const systemPrompt = this.buildSystemPrompt(input.state);
+      // Create the system prompt (vision-specific for Phase 7c if image present)
+      const systemPrompt = hasVision 
+        ? this.buildVisionSystemPrompt(input.state)
+        : this.buildSystemPrompt(input.state);
       
       // Create the user prompt with context
       const userPrompt = this.buildUserPrompt(input.text, input.state);
@@ -107,10 +112,21 @@ export class GeminiPlanner implements Planner {
           setTimeout(() => controller.abort(), this.config.timeout) : null;
         
         try {
+          // Build content parts based on whether we have vision
+          const contentParts = hasVision ? [
+            { text: fullPrompt },
+            { 
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: input.imageB64!
+              }
+            }
+          ] : [{ text: fullPrompt }];
+          
           response = await this.client.models.generateContent({
             model: this.config.model,
             contents: [
-              { role: 'user', parts: [{ text: fullPrompt }] }
+              { role: 'user', parts: contentParts }
             ],
             config: {
               temperature: this.config.temperature,
@@ -166,11 +182,15 @@ export class GeminiPlanner implements Planner {
       
       let responseText = response.text || '';
       
+      // Log raw response for debugging
+      console.log('[Gemini] Raw response:', responseText);
+      
       // Strip markdown code blocks if present (Gemini sometimes wraps JSON in ```json...```)
       responseText = responseText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
       
       // Parse the JSON response
       const parsed = JSON.parse(responseText);
+      console.log('[Gemini] Parsed response:', JSON.stringify(parsed));
       
       if (!parsed || !Array.isArray(parsed.calls)) {
         throw new Error('Invalid response structure');
@@ -182,16 +202,34 @@ export class GeminiPlanner implements Planner {
       const clampedValues: string[] = [];
       
       for (const call of parsed.calls.slice(0, this.config.maxCalls)) {
-        const validated = validateAndClampCall(call);
+        // Normalize the call format (Gemini may return tool_name/parameters instead of fn/args)
+        const normalizedCall = {
+          fn: call.fn || call.tool_name || call.function,
+          args: call.args || call.parameters || call.arguments
+        };
+        
+        // Log each call for debugging
+        logger.line('info', { event: 'processing_call', call: JSON.stringify(call), hasVision, normalized: JSON.stringify(normalizedCall) });
+        
+        // Phase 7c: In vision mode, only allow WB operations
+        if (hasVision && !normalizedCall.fn?.startsWith('set_white_balance')) {
+          console.log('[Gemini] Dropped non-WB call in vision mode:', JSON.stringify(normalizedCall));
+          logger.line('info', { event: 'dropped_non_wb', call: JSON.stringify(normalizedCall) });
+          droppedCalls.push(normalizedCall.fn || 'unknown');
+          continue;
+        }
+        
+        const validated = validateAndClampCall(normalizedCall);
         if (validated) {
           validCalls.push(validated);
           
           // Check if values were clamped
-          const clamped = getClampedValues(call, validated);
+          const clamped = getClampedValues(normalizedCall, validated);
           clampedValues.push(...clamped);
         } else {
-          console.log('[Gemini] Dropped invalid call:', JSON.stringify(call));
-          droppedCalls.push(call.fn || 'unknown');
+          console.log('[Gemini] Dropped invalid call:', JSON.stringify(normalizedCall));
+          logger.line('info', { event: 'dropped_invalid', call: JSON.stringify(normalizedCall) });
+          droppedCalls.push(normalizedCall.fn || 'unknown');
         }
       }
       
@@ -495,5 +533,62 @@ Current image state:
   * Contrast: ${state.limits.contrast[0]} to ${state.limits.contrast[1]}
   * Rotation: ${state.limits.angle[0]}° to ${state.limits.angle[1]}°
   * Quality: 1 to 100`;
+  }
+  
+  private buildVisionSystemPrompt(state?: PlannerState): string {
+    return `<role>
+You are an expert photo editing assistant with visual analysis capabilities.
+For this request, you can see the image and should analyze it to determine the best white balance correction.
+In Phase 7c, you can ONLY propose white balance adjustments.
+</role>
+
+<available_tools>
+<tool name="set_white_balance_temp_tint">
+  <description>Adjusts the color temperature and tint of the image</description>
+  <parameters>
+    <param name="temp" type="number" min="-100" max="100" required="true">
+      Temperature adjustment. Positive values make image warmer (more orange), negative values make it cooler (more blue)
+    </param>
+    <param name="tint" type="number" min="-100" max="100" required="true">
+      Tint adjustment. Positive values add magenta, negative values add green.
+    </param>
+  </parameters>
+</tool>
+
+<tool name="set_white_balance_gray">
+  <description>Sets white balance by picking a neutral gray point in the image</description>
+  <parameters>
+    <param name="x" type="number" min="0" max="1" required="true">X coordinate of gray point (0-1 normalized to the image you see)</param>
+    <param name="y" type="number" min="0" max="1" required="true">Y coordinate of gray point (0-1 normalized to the image you see)</param>
+  </parameters>
+  <usage_notes>
+  - Use this when you can identify a clear neutral target in the image (white, gray, or black area)
+  - Coordinates are normalized: (0,0) is top-left, (1,1) is bottom-right
+  - The agent will automatically map these to the original image space
+  </usage_notes>
+</tool>
+</available_tools>
+
+<decision_logic>
+1. Analyze the attached image for color cast
+2. If you can identify a clear neutral reference (white shirt, gray concrete, etc.), prefer set_white_balance_gray
+3. Otherwise, use set_white_balance_temp_tint based on the overall color cast
+4. For blue casts: use positive temp values
+5. For orange/warm casts: use negative temp values
+6. For green casts: use positive tint values
+7. For magenta casts: use negative tint values
+</decision_logic>
+
+${state ? `<current_state>
+${this.buildStateContext(state)}
+</current_state>` : ''}
+
+<output_requirements>
+- Return ONLY valid JSON: {"calls": [array of operations]}
+- You may only return white balance operations
+- All other operations will be ignored in Phase 7c
+- Maximum 1 white balance operation per response
+- When identifying a gray point, choose the most reliable neutral area
+</output_requirements>`;
   }
 }

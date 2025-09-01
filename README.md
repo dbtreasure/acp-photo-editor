@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 7b
+# ACP Photo Editor — Phase 7c
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **AI-powered natural language editing** via Google's Gemini 2.5 Flash model with structured JSON output and automatic fallback to mock planner.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **vision-enabled AI editing** that can analyze images to make intelligent white balance corrections using Google's Gemini 2.5 Flash model.
 
 ## Quick Start
 
@@ -25,9 +25,17 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 7b
+## What's New in Phase 7c
 
-Phase 7b adds Gemini 2.5 Flash integration for intelligent natural language processing:
+Phase 7c adds **vision capabilities** to the Gemini planner for intelligent white balance corrections:
+- **Vision Input**: Attach preview images to planner with `--with-image` flag
+- **Visual Analysis**: AI analyzes the actual image to determine color casts
+- **Smart Gray Point**: Automatically identifies neutral references in images
+- **Coordinate Mapping**: Maps preview coordinates back to original image space
+- **WB-Only Mode**: Phase 7c focuses exclusively on white balance adjustments
+- **Privacy-First**: Strips EXIF data and redacts file paths before sending
+
+### Previous Phase 7b Features
 - **Gemini Planner**: Uses Google's Gemini 2.5 Flash model for NLP
 - **Structured Output**: JSON Schema validation ensures reliable responses
 - **Automatic Fallback**: Falls back to MockPlanner on errors/timeout
@@ -53,7 +61,22 @@ Phase 7b adds Gemini 2.5 Flash integration for intelligent natural language proc
 
 ### Example Commands
 
-Natural language editing with Gemini understands complex requests:
+#### Vision Mode (Phase 7c - WB only)
+With `--with-image`, the AI can see your image and make intelligent corrections:
+```bash
+:ask --with-image "fix the white balance"
+:ask --with-image "neutralize the color cast"
+:ask --with-image "correct the blue tint"
+```
+
+The vision planner will:
+- Analyze the actual image for color casts
+- Identify neutral references (white shirts, gray concrete, etc.)
+- Choose between temp/tint or gray point methods
+- Map coordinates from preview to original image space
+
+#### Text Mode (Phase 7b)
+Natural language editing without vision still works for all operations:
 - `:ask "make it warmer and brighter with more contrast"`
 - `:ask "cool tones, lift shadows, crop to 16:9 for video"`
 - `:ask "subtle warm grade, +0.3 exposure, slight vignette"`
@@ -68,8 +91,8 @@ The Gemini planner intelligently:
 ## Phase 7 Roadmap
 
 - **7a**: MockPlanner with deterministic text → ops ✅
-- **7b (current)**: Gemini 2.5 Flash integration (text-only) ✅
-- **7c**: Add vision-lite (1024px preview input)
+- **7b**: Gemini 2.5 Flash integration (text-only) ✅
+- **7c (current)**: Vision-lite for WB (1024px preview input) ✅
 - **7d**: Full tool catalog + export in single turn
 
 ## What's New in Previous Phases

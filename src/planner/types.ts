@@ -25,8 +25,8 @@ export interface PlannerInput {
   text: string;
   // Phase 7b-7d fields:
   state?: any;  // Planner state with image metadata
-  // Future fields:
-  // image?: string;  // base64 image for vision (7c)
+  // Phase 7c: Vision support
+  imageB64?: string;  // base64 image for vision (7c)
 }
 
 export interface PlannerOutput {

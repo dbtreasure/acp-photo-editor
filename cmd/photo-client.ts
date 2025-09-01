@@ -273,9 +273,11 @@ async function main() {
       console.log('  :undo            - Undo last edit operation');
       console.log('  :redo            - Redo previously undone operation');
       console.log('  :reset           - Reset to original image');
-      console.log('  :ask <text>      - Natural language editing (Phase 7a)');
+      console.log('  :ask [--with-image] <text> - Natural language editing (Phase 7a/7c)');
+      console.log('    --with-image     - Include preview image for visual analysis (WB only)');
       console.log('    Examples: :ask warmer, +0.5 ev, more contrast, crop square');
       console.log('              :ask cool by 15, contrast -10, 16:9, straighten 1.2°');
+      console.log('              :ask --with-image "fix white balance"');
       console.log('  :export [opts]   - Export edited image to disk');
       console.log('    --format jpeg|png    - Output format (default: jpeg)');
       console.log('    --quality 1-100      - JPEG quality (default: 90)');
@@ -379,26 +381,36 @@ async function main() {
             isPrompting = false;
           }
         } else if (cmd.startsWith(':ask ')) {
-          // Handle natural language ask command (Phase 7a)
+          // Handle natural language ask command (Phase 7a/7c)
           if (isPrompting) {
             console.log('A prompt is already in progress. Use :cancel to cancel it.');
           } else {
-            // Extract text after :ask, removing quotes if present
+            // Extract text after :ask, checking for --with-image flag
             let askText = cmd.substring(5).trim();
+            let withImage = false;
+            
+            // Check for --with-image flag (Phase 7c)
+            if (askText.startsWith('--with-image ')) {
+              withImage = true;
+              askText = askText.substring(13).trim(); // Remove flag
+            }
+            
             // Remove surrounding quotes if present
             if ((askText.startsWith('"') && askText.endsWith('"')) || 
                 (askText.startsWith("'") && askText.endsWith("'"))) {
               askText = askText.slice(1, -1);
             }
             if (!askText) {
-              console.log('Usage: :ask <text>. Example: :ask warmer, +0.5 ev, crop square');
+              console.log('Usage: :ask [--with-image] <text>. Example: :ask --with-image "fix white balance"');
             } else {
               isPrompting = true;
-              console.log(`Processing: ${askText}`);
+              console.log(`Processing: ${askText}${withImage ? ' (with image)' : ''}`);
               try {
+                // Include the --with-image flag in the command if present
+                const commandText = withImage ? `:ask --with-image ${askText}` : `:ask ${askText}`;
                 const pRes = await peer.request('session/prompt', {
                   sessionId,
-                  prompt: [{ type: 'text', text: `:ask ${askText}` }]
+                  prompt: [{ type: 'text', text: commandText }]
                 });
                 console.log(`[result] stopReason: ${pRes.stopReason}`);
               } catch (e: any) {

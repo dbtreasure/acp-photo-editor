@@ -12,7 +12,7 @@ import { Readable } from 'stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { MCPServerConfig, ContentBlock, ToolCallContent, PermissionOperation } from '../src/acp/types';
-import { EditStackManager } from '../src/editStack';
+import { EditStackManager, EditStack } from '../src/editStack';
 import { MockPlanner } from '../src/planner/mock';
 import { GeminiPlanner, PlannerState as GeminiPlannerState } from '../src/planner/gemini';
 import { Planner, PlannedCall, PLANNER_CLAMPS } from '../src/planner/types';
@@ -487,6 +487,69 @@ async function getImageMetadata(uri: string, client: Client): Promise<{ width: n
   return defaults;
 }
 
+// Map preview coordinates to original image coordinates (Phase 7c)
+// Accounts for crop and rotation transformations
+function mapPreviewToOriginal(
+  x: number, 
+  y: number, 
+  stack: EditStack,
+  originalWidth: number,
+  originalHeight: number
+): { x: number; y: number; clamped: boolean } {
+  let mappedX = x;
+  let mappedY = y;
+  let wasClamped = false;
+  
+  // Process operations in reverse order (undo transformations)
+  const geometryOps = stack.ops.filter((op: any) => op.op === 'crop').reverse();
+  
+  for (const op of geometryOps) {
+    if (op.op === 'crop') {
+      const cropOp = op as any;
+      
+      // Handle rotation inverse
+      if (cropOp.angleDeg) {
+        // Rotate point back by negative angle
+        const angle = -cropOp.angleDeg * Math.PI / 180;
+        const centerX = 0.5;
+        const centerY = 0.5;
+        
+        // Translate to origin
+        const translatedX = mappedX - centerX;
+        const translatedY = mappedY - centerY;
+        
+        // Apply inverse rotation
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const rotatedX = translatedX * cos - translatedY * sin;
+        const rotatedY = translatedX * sin + translatedY * cos;
+        
+        // Translate back
+        mappedX = rotatedX + centerX;
+        mappedY = rotatedY + centerY;
+      }
+      
+      // Handle crop inverse
+      if (cropOp.rectNorm) {
+        const [cropX, cropY, cropW, cropH] = cropOp.rectNorm;
+        
+        // Map from cropped space back to original space
+        mappedX = cropX + mappedX * cropW;
+        mappedY = cropY + mappedY * cropH;
+      }
+    }
+  }
+  
+  // Clamp to valid range [0,1]
+  if (mappedX < 0 || mappedX > 1 || mappedY < 0 || mappedY > 1) {
+    wasClamped = true;
+    mappedX = Math.max(0, Math.min(1, mappedX));
+    mappedY = Math.max(0, Math.min(1, mappedY));
+  }
+  
+  return { x: mappedX, y: mappedY, clamped: wasClamped };
+}
+
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
   logger.line('info', { handleAskCommand_called: true, command, plannerMode });
   
@@ -515,10 +578,17 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     throw new Error('No MCP image server available');
   }
   
-  // Extract text after ":ask "
-  const askText = command.substring(5).trim();
+  // Parse command for --with-image flag (Phase 7c)
+  let withImage = false;
+  let askText = command.substring(5).trim(); // Remove ":ask "
+  
+  if (askText.startsWith('--with-image ')) {
+    withImage = true;
+    askText = askText.substring(13).trim(); // Remove flag
+  }
+  
   if (!askText) {
-    throw new Error('No text provided. Usage: :ask "warmer, +0.5 ev, crop square"');
+    throw new Error('No text provided. Usage: :ask [--with-image] "warmer, +0.5 ev, crop square"');
   }
   
   // Select planner based on configuration
@@ -547,9 +617,45 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     }
   };
   
+  // Capture preview image if --with-image flag is present (Phase 7c)
+  let imageB64: string | undefined;
+  if (withImage) {
+    try {
+      // Generate 1024px preview
+      const previewResult = await client.callTool({
+        name: 'render_preview',
+        arguments: {
+          uri: lastLoadedImage,
+          editStack: stackManager.getStack(),
+          maxPx: 1024
+        }
+      });
+      
+      // Extract image content
+      const content = previewResult.content as any;
+      if (content?.[0]?.type === 'image') {
+        // The image is already base64 encoded from the MCP server
+        imageB64 = content[0].data;
+        
+        // Log image capture
+        logger.line('info', { 
+          preview_captured: true, 
+          imageBytes: Math.round(imageB64!.length * 0.75) // Approximate decoded size
+        });
+      }
+    } catch (error: any) {
+      logger.line('error', { preview_capture_failed: error.message });
+      // Continue without image on error
+    }
+  }
+  
   // Plan the operations
   const startTime = Date.now();
-  const { calls, notes } = await planner.plan({ text: askText, state: plannerState });
+  const { calls, notes } = await planner.plan({ 
+    text: askText, 
+    state: plannerState,
+    imageB64 
+  });
   const planningTime = Date.now() - startTime;
   
   // Log apply result
@@ -610,7 +716,26 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       }
       
       case 'set_white_balance_gray': {
-        const { x, y } = call.args;
+        let { x, y } = call.args;
+        
+        // Map preview coordinates to original if we're in vision mode (Phase 7c)
+        if (withImage) {
+          const imageMeta = await getImageMetadata(lastLoadedImage, client);
+          const mapped = mapPreviewToOriginal(
+            x, y, 
+            stackManager.getStack(),
+            imageMeta.width,
+            imageMeta.height
+          );
+          
+          if (mapped.clamped) {
+            clampedValues.push(`gray_point mapped to ${mapped.x.toFixed(2)},${mapped.y.toFixed(2)} from ${x.toFixed(2)},${y.toFixed(2)}`);
+          }
+          
+          x = mapped.x;
+          y = mapped.y;
+        }
+        
         const clampedX = Math.max(0, Math.min(1, x));
         const clampedY = Math.max(0, Math.min(1, y));
         
