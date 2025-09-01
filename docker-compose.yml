@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Accept Jaeger thrift directly from clients
+      - "14250:14250"  # Accept gRPC
+      - "6831:6831/udp"  # Accept Jaeger thrift over UDP
+      - "6832:6832/udp"  # Accept Jaeger thrift over UDP
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    
+# To start Jaeger:
+# docker-compose up -d
+#
+# To view traces:
+# Open http://localhost:16686
+#
+# To stop:
+# docker-compose down

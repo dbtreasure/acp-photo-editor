@@ -96,6 +96,49 @@ The Gemini planner intelligently:
 - Handles multiple operations in logical order
 - Validates and clamps all values to safe ranges
 
+## Observability & Debugging (NEW!)
+
+The project now includes comprehensive OpenTelemetry-based observability for debugging LLM workflows:
+
+### Setup Jaeger for Trace Visualization
+```bash
+# Start Jaeger using Docker
+docker-compose up -d
+
+# Access Jaeger UI
+open http://localhost:16686
+```
+
+### Enable Tracing
+```bash
+# Run with tracing enabled
+OTEL_ENABLED=true npm run interactive -- --planner=gemini
+
+# With debug output
+OTEL_ENABLED=true OTEL_DEBUG=true npm run interactive -- --planner=gemini
+```
+
+### Debug Traces
+```bash
+# View latest trace in console
+node scripts/debug-trace.js
+
+# View specific trace
+node scripts/debug-trace.js <trace-id>
+```
+
+### What's Traced
+- **Image Operations**: Load, preview generation, base64 encoding
+- **Planner Execution**: API calls, response parsing, validation
+- **Edit Operations**: White balance, coordinate mapping, stack updates
+- **Performance Metrics**: Latency per operation, token usage
+
+### Benefits
+- **Immediate Visibility**: See exactly where failures occur (e.g., response format issues)
+- **Performance Analysis**: Identify bottlenecks in multi-step workflows
+- **Historical Comparison**: Compare successful vs failed runs
+- **Correlation IDs**: Automatic trace IDs in all log entries
+
 ## Phase 7 Roadmap
 
 - **7a**: MockPlanner with deterministic text → ops ✅

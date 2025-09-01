@@ -10,8 +10,13 @@
       "Bash(npm install:*)",
       "WebFetch(domain:ai.google.dev)",
       "Bash(npm test:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_navigate"
     ],
-    "additionalDirectories": ["/Users/dan/Development/agent-client-protocol/"]
+    "additionalDirectories": [
+      "/Users/dan/Development/agent-client-protocol/"
+    ]
   }
 }

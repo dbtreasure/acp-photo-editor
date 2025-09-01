@@ -6,6 +6,7 @@ import { Planner, PlannerInput, PlannerOutput, PlannedCall } from './types';
 import { MockPlanner } from './mock';
 import { TOOL_CATALOG_DESCRIPTION, PLANNER_RESPONSE_SCHEMA, validateAndClampCall, getClampedValues } from './tools';
 import { NdjsonLogger } from '../common/logger';
+import { withSpan, addSpanEvent, getTraceId } from '../telemetry/tracing';
 
 const logger = new NdjsonLogger('gemini-planner');
 
@@ -115,16 +116,25 @@ export class GeminiPlanner implements Planner {
               ]
             : [{ text: fullPrompt }];
 
-          response = await this.client.models.generateContent({
-            model: this.config.model,
-            contents: [{ role: 'user', parts: contentParts }],
-            config: {
-              temperature: this.config.temperature,
-              responseMimeType: 'application/json',
-              // Don't use responseSchema - it requires full property definitions
-              // Let Gemini return freeform JSON and we'll validate it ourselves
-              // Note: signal is not supported by @google/genai, timeout handled via AbortController
-            },
+          response = await withSpan('gemini.api_call', async (apiSpan) => {
+            apiSpan.setAttributes({
+              'api.model': this.config.model,
+              'api.temperature': this.config.temperature,
+              'api.attempt': attempt + 1,
+              'api.has_image': hasVision
+            });
+            
+            return await this.client!.models.generateContent({
+              model: this.config.model,
+              contents: [{ role: 'user', parts: contentParts }],
+              config: {
+                temperature: this.config.temperature,
+                responseMimeType: 'application/json',
+                // Don't use responseSchema - it requires full property definitions
+                // Let Gemini return freeform JSON and we'll validate it ourselves
+                // Note: signal is not supported by @google/genai, timeout handled via AbortController
+              },
+            });
           });
 
           // Clear timeout if successful

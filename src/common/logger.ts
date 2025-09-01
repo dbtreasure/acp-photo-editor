@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { trace } from '@opentelemetry/api';
 
 export type Direction = 'send' | 'recv' | 'info' | 'error';
 
@@ -16,6 +17,13 @@ export class NdjsonLogger {
   }
 
   line(dir: Direction, data: any) {
+    // Automatically add trace ID if available
+    const span = trace.getActiveSpan();
+    if (span && typeof data === 'object' && !data.traceId) {
+      const spanContext = span.spanContext();
+      data = { ...data, traceId: spanContext.traceId };
+    }
+    
     const rec = { t: new Date().toISOString(), dir, data };
     const s = JSON.stringify(rec);
     this.stream?.write(s + '\n');

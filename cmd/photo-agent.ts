@@ -19,6 +19,21 @@ import { Planner, PlannedCall, PLANNER_CLAMPS } from '../src/planner/types';
 import path from 'path';
 import fs from 'fs/promises';
 import { pathToFileURL } from 'url';
+import { 
+  initTelemetry, 
+  withSpan, 
+  addSpanAttributes, 
+  addSpanEvent,
+  getTraceId,
+  shutdownTelemetry 
+} from '../src/telemetry/tracing';
+import { SpanStatusCode } from '@opentelemetry/api';
+
+// Initialize telemetry
+initTelemetry({
+  serviceName: 'photo-agent',
+  debug: process.env.OTEL_DEBUG === 'true'
+});
 
 const logger = new NdjsonLogger('agent');
 
@@ -577,17 +592,29 @@ function mapPreviewToOriginal(
 }
 
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
-  logger.line('info', { handleAskCommand_called: true, command, plannerMode });
-
-  // Check if planner is disabled
-  if (plannerMode === 'off') {
-    notify('session/update', {
-      sessionId,
-      sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: 'Planner disabled. Use --planner=mock or --planner=gemini to enable.' },
+  return withSpan('ask_command', async (span) => {
+    // Add trace ID to logs
+    const traceId = getTraceId();
+    logger.line('info', { handleAskCommand_called: true, command, plannerMode, traceId });
+    
+    // Set span attributes
+    span.setAttributes({
+      'command': command,
+      'session_id': sessionId,
+      'planner_mode': plannerMode,
+      'request_id': requestId
     });
-    return;
-  }
+
+    // Check if planner is disabled
+    if (plannerMode === 'off') {
+      addSpanEvent('planner_disabled');
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Planner disabled. Use --planner=mock or --planner=gemini to enable.' },
+      });
+      return;
+    }
 
   // Parse command early to check for --with-image flag
   const hasWithImageFlag = command.includes('--with-image');
@@ -653,43 +680,80 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
   // Capture preview image if --with-image flag is present (Phase 7c)
   let imageB64: string | undefined;
   if (withImage) {
-    try {
-      // Generate 1024px preview
-      const previewResult = await client.callTool({
-        name: 'render_preview',
-        arguments: {
-          uri: lastLoadedImage,
-          editStack: stackManager.getStack(),
-          maxPx: 1024,
-        },
-      });
-
-      // Extract image content
-      const content = previewResult.content as any;
-      if (content?.[0]?.type === 'image') {
-        // The image is already base64 encoded from the MCP server
-        imageB64 = content[0].data;
-
-        // Log image capture
-        logger.line('info', {
-          preview_captured: true,
-          imageBytes: Math.round(imageB64!.length * 0.75), // Approximate decoded size
+    imageB64 = await withSpan('preview.capture', async (previewSpan) => {
+      try {
+        previewSpan.setAttributes({
+          'image.uri': lastLoadedImage || '',
+          'image.max_px': 1024
         });
+        
+        // Generate 1024px preview
+        const previewResult = await client.callTool({
+          name: 'render_preview',
+          arguments: {
+            uri: lastLoadedImage,
+            editStack: stackManager.getStack(),
+            maxPx: 1024,
+          },
+        });
+
+        // Extract image content
+        const content = previewResult.content as any;
+        if (content?.[0]?.type === 'image') {
+          // The image is already base64 encoded from the MCP server
+          const data = content[0].data;
+          const imageBytes = Math.round(data.length * 0.75);
+          
+          previewSpan.setAttributes({
+            'image.bytes': imageBytes,
+            'image.captured': true
+          });
+          
+          // Log image capture
+          logger.line('info', {
+            preview_captured: true,
+            imageBytes,
+            traceId: getTraceId()
+          });
+          
+          return data;
+        }
+        return undefined;
+      } catch (error: any) {
+        previewSpan.recordException(error);
+        logger.line('error', { preview_capture_failed: error.message, traceId: getTraceId() });
+        // Continue without image on error
+        return undefined;
       }
-    } catch (error: any) {
-      logger.line('error', { preview_capture_failed: error.message });
-      // Continue without image on error
-    }
+    });
   }
 
   // Plan the operations
-  const startTime = Date.now();
-  const { calls, notes } = await planner.plan({
-    text: askText,
-    state: plannerState,
-    imageB64,
+  const planResult = await withSpan('planner.execute', async (plannerSpan) => {
+    plannerSpan.setAttributes({
+      'planner.type': plannerMode,
+      'planner.has_image': !!imageB64,
+      'planner.text': askText
+    });
+    
+    const startTime = Date.now();
+    const result = await planner.plan({
+      text: askText,
+      state: plannerState,
+      imageB64,
+    });
+    const planningTime = Date.now() - startTime;
+    
+    plannerSpan.setAttributes({
+      'planner.latency_ms': planningTime,
+      'planner.calls_count': result.calls.length,
+      'planner.has_notes': !!result.notes?.length
+    });
+    
+    return { ...result, planningTime };
   });
-  const planningTime = Date.now() - startTime;
+  
+  const { calls, notes, planningTime } = planResult;
 
   // Log apply result
   const stackBefore = stackManager.getStack();
@@ -702,11 +766,17 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
   const appliedOps: string[] = [];
   let hasExport = false;
 
-  // Process each planned call
-  for (const call of calls) {
-    if (cancelled) break;
+  // Apply operations from planner calls
+  await withSpan('operations.apply', async (applySpan) => {
+    applySpan.setAttributes({
+      'operations.count': calls.length,
+    });
 
-    switch (call.fn) {
+    // Process each planned call
+    for (const call of calls) {
+      if (cancelled) break;
+
+      switch (call.fn) {
       case 'set_white_balance_temp_tint': {
         const { temp, tint } = call.args;
 
@@ -754,7 +824,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         let { x, y } = call.args;
 
         // Map preview coordinates to original if we're in vision mode (Phase 7c)
-        if (withImage) {
+        if (withImage && lastLoadedImage) {
           const imageMeta = await getImageMetadata(lastLoadedImage, client);
           const mapped = mapPreviewToOriginal(x, y, stackManager.getStack(), imageMeta.width, imageMeta.height);
 
@@ -919,6 +989,13 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     }
   }
 
+    // End apply operations span
+    applySpan.setAttributes({
+      'operations.applied': appliedOps.join(', '),
+      'operations.clamped_count': clampedValues.length,
+    });
+  }); // End withSpan for operations.apply
+
   // Log apply result telemetry
   const stackAfter = stackManager.getStack();
   const stackHashAfter = JSON.stringify(stackAfter).length; // Simple hash
@@ -944,6 +1021,13 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
   }
   summaryText += `Stack: ${stackManager.getStackSummary()}`;
 
+  // Add span event for summary generation
+  addSpanEvent('summary.sent', {
+    'summary.applied_ops': appliedOps.join(', '),
+    'summary.clamped_count': clampedValues.length,
+    'summary.stack': stackManager.getStackSummary(),
+  });
+
   // Send text summary first
   notify('session/update', {
     sessionId,
@@ -953,50 +1037,65 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
 
   // Render preview (only if we have operations)
   if (stackManager.hasOperations()) {
-    const toolCallId = 'ask_render';
-
-    notify('session/update', {
-      sessionId,
-      sessionUpdate: 'tool_call_update',
-      toolCallId,
-      status: 'in_progress',
-      rawInput: { operation: 'render_preview' },
-    });
-
-    try {
+    await withSpan('preview.render', async (renderSpan) => {
+      const toolCallId = 'ask_render';
       const stack = stackManager.getStack();
-      const previewResult = await client.callTool({
-        name: 'render_preview',
-        arguments: {
-          uri: lastLoadedImage,
-          editStack: stack,
-          maxPx: 1024,
-        },
+      
+      renderSpan.setAttributes({
+        'preview.stack_size': stack.ops.length,
+        'preview.max_px': 1024,
       });
 
-      const content = previewResult.content as any;
-      if (content?.[0]?.type === 'image') {
-        const imageData = content[0].data;
-        const mimeType = content[0].mimeType || 'image/png';
-
-        notify('session/update', {
-          sessionId,
-          sessionUpdate: 'tool_call_update',
-          toolCallId,
-          status: 'completed',
-          content: [{ type: 'image', data: imageData, mimeType }],
-        });
-      }
-    } catch (error: any) {
-      logger.line('error', { render_preview_failed: error.message });
       notify('session/update', {
         sessionId,
         sessionUpdate: 'tool_call_update',
         toolCallId,
-        status: 'failed',
-        error: { message: error.message },
+        status: 'in_progress',
+        rawInput: { operation: 'render_preview' },
       });
-    }
+
+      try {
+        const previewResult = await client.callTool({
+          name: 'render_preview',
+          arguments: {
+            uri: lastLoadedImage,
+            editStack: stack,
+            maxPx: 1024,
+          },
+        });
+
+        const content = previewResult.content as any;
+        if (content?.[0]?.type === 'image') {
+          const imageData = content[0].data;
+          const mimeType = content[0].mimeType || 'image/png';
+          
+          renderSpan.setAttributes({
+            'preview.output_type': mimeType,
+            'preview.output_size': imageData?.length || 0,
+          });
+
+          notify('session/update', {
+            sessionId,
+            sessionUpdate: 'tool_call_update',
+            toolCallId,
+            status: 'completed',
+            content: [{ type: 'image', data: imageData, mimeType }],
+          });
+          
+        }
+      } catch (error: any) {
+        renderSpan.recordException(error);
+        renderSpan.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+        logger.line('error', { render_preview_failed: error.message });
+        notify('session/update', {
+          sessionId,
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          status: 'failed',
+          error: { message: error.message },
+        });
+      }
+    }); // End preview.render span
   }
 
   // Handle export if requested
@@ -1123,6 +1222,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       }
     }
   }
+  }); // End of withSpan
 }
 
 async function handleEditCommand(command: string, sessionId: string): Promise<void> {
