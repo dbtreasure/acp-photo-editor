@@ -193,18 +193,16 @@ export class MockPlanner implements Planner {
       finalCalls.push({ fn: 'set_contrast', args: { amt: totalContrast } });
     }
 
-    // Add crop operations last (combine with angle if needed)
+    // Add rotation if needed
+    if (totalAngle !== 0) {
+      finalCalls.push({ fn: 'set_rotate', args: { angleDeg: totalAngle } });
+    }
+    
+    // Add crop operations last
     const cropCalls = calls.filter((c) => c.fn === 'set_crop');
-    if (cropCalls.length > 0 || totalAngle !== 0) {
-      if (cropCalls.length > 0) {
-        const lastCrop = cropCalls[cropCalls.length - 1] as any;
-        if (totalAngle !== 0) {
-          lastCrop.args.angleDeg = totalAngle;
-        }
-        finalCalls.push(lastCrop);
-      } else {
-        finalCalls.push({ fn: 'set_crop', args: { angleDeg: totalAngle } });
-      }
+    if (cropCalls.length > 0) {
+      const lastCrop = cropCalls[cropCalls.length - 1];
+      finalCalls.push(lastCrop);
     }
 
     // Replace calls with finalCalls

@@ -13,7 +13,8 @@
       "Bash(cat:*)",
       "mcp__playwright__browser_snapshot",
       "mcp__playwright__browser_click",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_take_screenshot"
     ],
     "additionalDirectories": [
       "/Users/dan/Development/agent-client-protocol/"

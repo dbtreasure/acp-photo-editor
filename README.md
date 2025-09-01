@@ -1,6 +1,6 @@
-# ACP Photo Editor — Phase 7c
+# ACP Photo Editor — Phase 7d
 
-An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **vision-enabled AI editing** that can analyze images to make intelligent white balance corrections using Google's Gemini 2.5 Flash model.
+An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **full vision-enabled AI editing** that can analyze images to make intelligent corrections across the entire tool catalog using Google's Gemini 2.5 Flash model.
 
 ## Quick Start
 
@@ -25,16 +25,17 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 7c
+## What's New in Phase 7d
 
-Phase 7c adds **vision capabilities** to the Gemini planner for intelligent white balance corrections:
+Phase 7d extends vision capabilities to the **full tool catalog** for comprehensive AI-powered editing:
 
-- **Vision Input**: Attach preview images to planner with `--with-image` flag
-- **Visual Analysis**: AI analyzes the actual image to determine color casts
-- **Smart Gray Point**: Automatically identifies neutral references in images
-- **Coordinate Mapping**: Maps preview coordinates back to original image space
-- **WB-Only Mode**: Phase 7c focuses exclusively on white balance adjustments
-- **Privacy-First**: Strips EXIF data and redacts file paths before sending
+- **Full Tool Catalog**: All operations now available in vision mode (WB, exposure, contrast, saturation, vibrance, rotate, crop, export)
+- **Intelligent Analysis**: AI analyzes images to suggest exposure, contrast, composition improvements
+- **Smart Cropping**: Visual composition analysis for better crop suggestions
+- **Horizon Detection**: Automatic rotation suggestions for tilted horizons
+- **Single-Turn Export**: Complete edit-to-export workflows in one command
+- **Enhanced Mapping**: Coordinate mapping for both gray points and crop rectangles
+- **Complete OTEL/Jaeger**: End-to-end tracing across all operations
 
 ### Previous Phase 7b Features
 
@@ -63,22 +64,25 @@ Phase 7c adds **vision capabilities** to the Gemini planner for intelligent whit
 
 ### Example Commands
 
-#### Vision Mode (Phase 7c - WB only)
+#### Vision Mode (Phase 7d - Full Catalog)
 
-With `--with-image`, the AI can see your image and make intelligent corrections:
+With `--with-image`, the AI can see your image and make comprehensive intelligent corrections:
 
 ```bash
-:ask --with-image "fix the white balance"
-:ask --with-image "neutralize the color cast"
-:ask --with-image "correct the blue tint"
+:ask --with-image "fix white balance, brighten slightly, add contrast, crop to 16:9, export as final.jpg"
+:ask --with-image "neutralize the blue cast, lift shadows, make it warmer, square crop, export PNG"
+:ask --with-image "correct the colors and straighten the horizon, export high quality"
+:ask --with-image "enhance this portrait - better skin tones, softer contrast, tighter crop"
 ```
 
 The vision planner will:
 
-- Analyze the actual image for color casts
-- Identify neutral references (white shirts, gray concrete, etc.)
-- Choose between temp/tint or gray point methods
-- Map coordinates from preview to original image space
+- Analyze the image for color casts, exposure issues, and composition
+- Identify neutral references for white balance correction
+- Detect tilted horizons and suggest rotation angles
+- Recommend crops based on composition and subject matter
+- Apply saturation/vibrance intelligently based on content
+- Execute complete workflows including export in a single turn
 
 #### Text Mode (Phase 7b)
 
@@ -86,7 +90,8 @@ Natural language editing without vision still works for all operations:
 
 - `:ask "make it warmer and brighter with more contrast"`
 - `:ask "cool tones, lift shadows, crop to 16:9 for video"`
-- `:ask "subtle warm grade, +0.3 exposure, slight vignette"`
+- `:ask "enhance colors with more vibrance, straighten horizon"`
+- `:ask "black and white with high contrast, square crop"`
 - `:ask "export to ./finals/hero.jpg at 95% quality"`
 
 The Gemini planner intelligently:
@@ -95,6 +100,21 @@ The Gemini planner intelligently:
 - Applies appropriate values based on context
 - Handles multiple operations in logical order
 - Validates and clamps all values to safe ranges
+
+### New Operations in Phase 7d
+
+**Color Enhancement:**
+- `set_saturation`: Adjust color intensity (-100 to 100, -100 = B&W)
+- `set_vibrance`: Smart saturation that protects skin tones
+
+**Geometry:**
+- `set_rotate`: Straighten horizons (-45 to 45 degrees)
+- Enhanced `set_crop`: Now supports rectNorm for precise cropping
+
+**Complete Workflows:**
+- Single-turn operations from edit to export
+- Vision-guided automatic adjustments
+- Coordinate mapping for all spatial operations
 
 ## Observability & Debugging (NEW!)
 

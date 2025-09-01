@@ -102,6 +102,8 @@ const RenderPreviewArgsSchema = z.object({
     ops: z.array(EditOpSchema),
   }),
   maxPx: z.number().int().positive().default(1024),
+  format: z.enum(['jpeg', 'png']).optional().default('jpeg'),
+  quality: z.number().min(1).max(100).optional().default(60),
 });
 
 const ComputeAspectRectArgsSchema = z.object({
@@ -566,7 +568,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === 'render_preview') {
-    const { uri, editStack, maxPx } = RenderPreviewArgsSchema.parse(args);
+    const { uri, editStack, maxPx, format, quality } = RenderPreviewArgsSchema.parse(args);
 
     if (!uri.startsWith('file://')) {
       throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
@@ -598,7 +600,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: 'image',
             data: cached.toString('base64'),
-            mimeType: 'image/png',
+            mimeType: format === 'jpeg' ? 'image/jpeg' : 'image/png',
           },
         ],
       };
@@ -669,13 +671,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       // Resize to preview size
-      const preview = await pipeline
-        .resize(maxPx, maxPx, {
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .png()
-        .toBuffer();
+      let previewPipeline = pipeline.resize(maxPx, maxPx, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+
+      // Apply format and quality settings
+      let preview: Buffer;
+      let mimeType: string;
+      if (format === 'jpeg') {
+        preview = await previewPipeline.jpeg({ quality }).toBuffer();
+        mimeType = 'image/jpeg';
+      } else {
+        preview = await previewPipeline.png().toBuffer();
+        mimeType = 'image/png';
+      }
 
       // Cache the result
       previewCache.set(cacheKey, preview);
@@ -693,7 +703,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: 'image',
             data: preview.toString('base64'),
-            mimeType: 'image/png',
+            mimeType,
           },
         ],
       };

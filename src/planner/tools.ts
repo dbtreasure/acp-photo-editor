@@ -97,6 +97,66 @@ export const TOOL_SCHEMAS = {
     required: ['fn', 'args'],
   },
 
+  set_saturation: {
+    type: 'object',
+    properties: {
+      fn: { type: 'string', enum: ['set_saturation'] },
+      args: {
+        type: 'object',
+        properties: {
+          amt: {
+            type: 'number',
+            minimum: PLANNER_CLAMPS.saturation.min,
+            maximum: PLANNER_CLAMPS.saturation.max,
+            description: 'Saturation amount (-100 to 100)',
+          },
+        },
+        required: ['amt'],
+      },
+    },
+    required: ['fn', 'args'],
+  },
+
+  set_vibrance: {
+    type: 'object',
+    properties: {
+      fn: { type: 'string', enum: ['set_vibrance'] },
+      args: {
+        type: 'object',
+        properties: {
+          amt: {
+            type: 'number',
+            minimum: PLANNER_CLAMPS.vibrance.min,
+            maximum: PLANNER_CLAMPS.vibrance.max,
+            description: 'Vibrance amount (-100 to 100)',
+          },
+        },
+        required: ['amt'],
+      },
+    },
+    required: ['fn', 'args'],
+  },
+
+  set_rotate: {
+    type: 'object',
+    properties: {
+      fn: { type: 'string', enum: ['set_rotate'] },
+      args: {
+        type: 'object',
+        properties: {
+          angleDeg: {
+            type: 'number',
+            minimum: PLANNER_CLAMPS.angleDeg.min,
+            maximum: PLANNER_CLAMPS.angleDeg.max,
+            description: 'Rotation angle in degrees (-45 to 45)',
+          },
+        },
+        required: ['angleDeg'],
+      },
+    },
+    required: ['fn', 'args'],
+  },
+
   set_crop: {
     type: 'object',
     properties: {
@@ -115,12 +175,6 @@ export const TOOL_SCHEMAS = {
             minItems: 4,
             maxItems: 4,
             description: 'Normalized crop rectangle [x, y, width, height]',
-          },
-          angleDeg: {
-            type: 'number',
-            minimum: PLANNER_CLAMPS.angleDeg.min,
-            maximum: PLANNER_CLAMPS.angleDeg.max,
-            description: 'Rotation angle in degrees (-45 to 45)',
           },
         },
       },
@@ -214,15 +268,22 @@ Available photo editing operations:
 3. Contrast:
    - set_contrast: Adjust contrast amount from -100 to 100
 
-4. Crop & Rotate:
-   - set_crop: Set aspect ratio (1:1, 3:2, 4:3, 16:9), custom rectangle, or rotation angle (-45 to 45 degrees)
+4. Saturation & Vibrance:
+   - set_saturation: Adjust saturation amount from -100 to 100 (color intensity)
+   - set_vibrance: Adjust vibrance amount from -100 to 100 (smart saturation)
 
-5. History:
+5. Rotate:
+   - set_rotate: Rotate image by angle in degrees (-45 to 45)
+
+6. Crop:
+   - set_crop: Set aspect ratio (1:1, 3:2, 4:3, 16:9) or custom rectangle
+
+7. History:
    - undo: Undo last operation
    - redo: Redo previously undone operation
    - reset: Reset to original image
 
-6. Export:
+8. Export:
    - export_image: Export with optional destination path, format (jpeg/png), quality (1-100), and overwrite flag
 
 IMPORTANT RULES:
@@ -231,7 +292,7 @@ IMPORTANT RULES:
 - All numeric values will be clamped to their valid ranges
 - For incremental adjustments (e.g., "warmer"), use relative values like temp: 20
 - For absolute adjustments (e.g., "temp 50"), use the exact value
-- Crop and rotate can be combined in a single set_crop call
+- Crop and rotate are now separate operations
 `;
 
 // Validate and clamp a planned call
@@ -284,6 +345,33 @@ export function validateAndClampCall(call: any): PlannedCall | null {
         };
         break;
 
+      case 'set_saturation':
+        if (!call.args || typeof call.args.amt !== 'number') {
+          return null;
+        }
+        clampedCall.args = {
+          amt: clamp(call.args.amt, PLANNER_CLAMPS.saturation.min, PLANNER_CLAMPS.saturation.max),
+        };
+        break;
+
+      case 'set_vibrance':
+        if (!call.args || typeof call.args.amt !== 'number') {
+          return null;
+        }
+        clampedCall.args = {
+          amt: clamp(call.args.amt, PLANNER_CLAMPS.vibrance.min, PLANNER_CLAMPS.vibrance.max),
+        };
+        break;
+
+      case 'set_rotate':
+        if (!call.args || typeof call.args.angleDeg !== 'number') {
+          return null;
+        }
+        clampedCall.args = {
+          angleDeg: clamp(call.args.angleDeg, PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max),
+        };
+        break;
+
       case 'set_crop':
         if (!call.args) {
           return null;
@@ -294,9 +382,6 @@ export function validateAndClampCall(call: any): PlannedCall | null {
         }
         if (Array.isArray(call.args.rectNorm) && call.args.rectNorm.length === 4) {
           cropArgs.rectNorm = call.args.rectNorm.map((v: number) => clamp(v, 0, 1));
-        }
-        if (typeof call.args.angleDeg === 'number') {
-          cropArgs.angleDeg = clamp(call.args.angleDeg, PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max);
         }
         if (Object.keys(cropArgs).length === 0) {
           return null;
@@ -336,7 +421,6 @@ export function validateAndClampCall(call: any): PlannedCall | null {
         break;
 
       default:
-        // Unknown function
         return null;
     }
 
@@ -346,51 +430,71 @@ export function validateAndClampCall(call: any): PlannedCall | null {
   }
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
+// Helper to get clamped values for logging
+export function getClampedValues(original: any, clamped: PlannedCall): Array<{ name: string; from: any; to: any }> {
+  const clamped_values: Array<{ name: string; from: any; to: any }> = [];
 
-// Track what values were clamped for reporting
-export function getClampedValues(original: PlannedCall, clamped: PlannedCall): string[] {
-  const clampedValues: string[] = [];
+  if (!original.args || !('args' in clamped) || !clamped.args) {
+    return clamped_values;
+  }
 
-  if (original.fn !== clamped.fn) return clampedValues;
-
-  const origArgs = (original as any).args;
-  const clampArgs = (clamped as any).args;
-
-  if (!origArgs || !clampArgs) return clampedValues;
+  const checkClamped = (field: string, originalValue: any, clampedValue: any) => {
+    if (originalValue !== clampedValue) {
+      clamped_values.push({
+        name: `${original.fn}.${field}`,
+        from: originalValue,
+        to: clampedValue,
+      });
+    }
+  };
 
   switch (original.fn) {
     case 'set_white_balance_temp_tint':
-      if (origArgs.temp !== clampArgs.temp) {
-        clampedValues.push(`temp clamped from ${origArgs.temp} to ${clampArgs.temp}`);
-      }
-      if (origArgs.tint !== clampArgs.tint) {
-        clampedValues.push(`tint clamped from ${origArgs.tint} to ${clampArgs.tint}`);
-      }
+      checkClamped('temp', original.args.temp, (clamped.args as any).temp);
+      checkClamped('tint', original.args.tint, (clamped.args as any).tint);
+      break;
+    case 'set_white_balance_gray':
+      checkClamped('x', original.args.x, (clamped.args as any).x);
+      checkClamped('y', original.args.y, (clamped.args as any).y);
       break;
     case 'set_exposure':
-      if (origArgs.ev !== clampArgs.ev) {
-        clampedValues.push(`EV clamped from ${origArgs.ev} to ${clampArgs.ev}`);
-      }
+      checkClamped('ev', original.args.ev, (clamped.args as any).ev);
       break;
     case 'set_contrast':
-      if (origArgs.amt !== clampArgs.amt) {
-        clampedValues.push(`contrast clamped from ${origArgs.amt} to ${clampArgs.amt}`);
-      }
+      checkClamped('amt', original.args.amt, (clamped.args as any).amt);
+      break;
+    case 'set_saturation':
+      checkClamped('amt', original.args.amt, (clamped.args as any).amt);
+      break;
+    case 'set_vibrance':
+      checkClamped('amt', original.args.amt, (clamped.args as any).amt);
+      break;
+    case 'set_rotate':
+      checkClamped('angleDeg', original.args.angleDeg, (clamped.args as any).angleDeg);
       break;
     case 'set_crop':
-      if (origArgs.angleDeg !== clampArgs.angleDeg) {
-        clampedValues.push(`angle clamped from ${origArgs.angleDeg}° to ${clampArgs.angleDeg}°`);
+      if (original.args.rectNorm && (clamped.args as any).rectNorm) {
+        for (let i = 0; i < 4; i++) {
+          if (original.args.rectNorm[i] !== (clamped.args as any).rectNorm[i]) {
+            clamped_values.push({
+              name: `${original.fn}.rectNorm[${i}]`,
+              from: original.args.rectNorm[i],
+              to: (clamped.args as any).rectNorm[i],
+            });
+          }
+        }
       }
       break;
     case 'export_image':
-      if (origArgs?.quality !== clampArgs?.quality) {
-        clampedValues.push(`quality clamped from ${origArgs.quality} to ${clampArgs.quality}`);
+      if (original.args && clamped.args) {
+        checkClamped('quality', original.args.quality, (clamped.args as any).quality);
       }
       break;
   }
 
-  return clampedValues;
+  return clamped_values;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }

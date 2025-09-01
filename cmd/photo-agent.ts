@@ -46,6 +46,9 @@ let mcpClients: Map<string, Client> = new Map();
 const imageStacks = new Map<string, EditStackManager>();
 let lastLoadedImage: string | null = null;
 
+// Turn counter for tracking
+let turnCounter = 0;
+
 // Cache image metadata to avoid repeated tool calls
 const imageMetadataCache = new Map<string, { width: number; height: number; mimeType?: string }>();
 
@@ -280,6 +283,21 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
             responseText = `ack: ${resourceLinks.length} resources (${firstBasename}${moreText})`;
           } else if (text === 'ping') {
             responseText = 'pong';
+          } else if (text === ':help' || text === 'help') {
+            responseText = `Available commands:
+:ask "text" - Ask AI to edit image with natural language
+:ask --with-image "text" - Include image for visual analysis (Phase 7d)
+  Examples:
+  :ask "warm +0.5 ev, crop square"
+  :ask --with-image "fix white balance, add contrast, rotate -1°, crop to subject"
+  :ask --with-image "brighten, more vibrant, straighten horizon, export as final.jpg"
+  :ask "export to ./Export/hero.jpg quality 95"
+:load <path> - Load an image
+:reset - Reset to original
+:undo - Undo last operation
+:redo - Redo operation
+:stack - Show edit stack
+:export - Export edited image`;
           } else {
             responseText = `echo:${text}`;
           }
@@ -592,7 +610,22 @@ function mapPreviewToOriginal(
 }
 
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
-  return withSpan('ask_command', async (span) => {
+  // Store export info if needed
+  let exportInfo: { 
+    call: PlannedCall, 
+    stackManager: EditStackManager,
+    client: any,
+    lastLoadedImage: string,
+    sessionId: string,
+    cwd: string,
+    requestId: number
+  } | undefined;
+  
+  // Main processing in span
+  await withSpan('ask_command', async (span) => {
+    // Increment turn counter
+    turnCounter++;
+    
     // Add trace ID to logs
     const traceId = getTraceId();
     logger.line('info', { handleAskCommand_called: true, command, plannerMode, traceId });
@@ -602,7 +635,8 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       'command': command,
       'session_id': sessionId,
       'planner_mode': plannerMode,
-      'request_id': requestId
+      'request_id': requestId,
+      'turn_id': turnCounter
     });
 
     // Check if planner is disabled
@@ -684,16 +718,20 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       try {
         previewSpan.setAttributes({
           'image.uri': lastLoadedImage || '',
-          'image.max_px': 1024
+          'image.max_px': 1024,
+          'image.format': 'jpeg',
+          'image.quality': 60
         });
         
-        // Generate 1024px preview
+        // Generate 1024px preview using JPEG for smaller size
         const previewResult = await client.callTool({
           name: 'render_preview',
           arguments: {
             uri: lastLoadedImage,
             editStack: stackManager.getStack(),
             maxPx: 1024,
+            format: 'jpeg',
+            quality: 60,  // Reduced from 80 to optimize size
           },
         });
 
@@ -737,17 +775,72 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     });
     
     const startTime = Date.now();
-    const result = await planner.plan({
+    const PLANNER_TIMEOUT_MS = 3000; // 3 second timeout target
+    
+    // Create timeout promise
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        const elapsed = Date.now() - startTime;
+        logger.line('info', {
+          event: 'planner_timeout_would_trigger',
+          elapsed_ms: elapsed,
+          timeout_ms: PLANNER_TIMEOUT_MS
+        });
+        // Don't actually reject, just log that we would have
+        // reject(new Error(`Planner timeout after ${elapsed}ms`));
+      }, PLANNER_TIMEOUT_MS);
+    });
+    
+    // Race between planner and timeout (but don't actually timeout)
+    const plannerPromise = planner.plan({
       text: askText,
       state: plannerState,
       imageB64,
     });
+    
+    // Wait for planner (not actually racing for now, just monitoring)
+    const result = await plannerPromise;
     const planningTime = Date.now() - startTime;
+    
+    // Log if we exceeded timeout
+    if (planningTime > PLANNER_TIMEOUT_MS) {
+      addSpanEvent('planner.timeout_exceeded', {
+        'planner.timeout_ms': PLANNER_TIMEOUT_MS,
+        'planner.actual_ms': planningTime
+      });
+      plannerSpan.setAttributes({
+        'planner.timeout_exceeded': true
+      });
+    }
+    
+    // Create calls list string
+    const callsList = result.calls.map(c => {
+      if (c.fn === 'set_white_balance_temp_tint' || c.fn === 'set_white_balance_gray') {
+        return 'wb';
+      } else if (c.fn === 'set_exposure') {
+        return 'ev';
+      } else if (c.fn === 'set_contrast') {
+        return 'contrast';
+      } else if (c.fn === 'set_saturation') {
+        return 'saturation';
+      } else if (c.fn === 'set_vibrance') {
+        return 'vibrance';
+      } else if (c.fn === 'set_rotate') {
+        return 'rotate';
+      } else if (c.fn === 'set_crop') {
+        return 'crop';
+      } else if (c.fn === 'export_image') {
+        return 'export';
+      } else {
+        return c.fn.replace('set_', '');
+      }
+    }).join(',');
     
     plannerSpan.setAttributes({
       'planner.latency_ms': planningTime,
       'planner.calls_count': result.calls.length,
-      'planner.has_notes': !!result.notes?.length
+      'planner.has_notes': !!result.notes?.length,
+      'planner.calls_list': callsList
     });
     
     return { ...result, planningTime };
@@ -761,15 +854,16 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
 
   logger.line('info', { planner_output: { calls, notes } });
 
-  // Track what was clamped
+  // Track what was clamped and dropped
   const clampedValues: string[] = [];
   const appliedOps: string[] = [];
+  const droppedOps: string[] = [];
   let hasExport = false;
 
   // Apply operations from planner calls
   await withSpan('operations.apply', async (applySpan) => {
     applySpan.setAttributes({
-      'operations.count': calls.length,
+      'operations.planned': calls.length,
     });
 
     // Process each planned call
@@ -912,8 +1006,48 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         break;
       }
 
+      case 'set_saturation': {
+        const { amt } = call.args;
+        const clampedAmt = Math.max(PLANNER_CLAMPS.saturation.min, Math.min(PLANNER_CLAMPS.saturation.max, amt));
+        
+        if (clampedAmt !== amt) {
+          clampedValues.push(`saturation ${amt} → ${clampedAmt}`);
+        }
+        
+        stackManager.addSaturation({ amt: clampedAmt });
+        appliedOps.push(`Saturation ${clampedAmt > 0 ? '+' : ''}${clampedAmt}`);
+        break;
+      }
+
+      case 'set_vibrance': {
+        const { amt } = call.args;
+        const clampedAmt = Math.max(PLANNER_CLAMPS.vibrance.min, Math.min(PLANNER_CLAMPS.vibrance.max, amt));
+        
+        if (clampedAmt !== amt) {
+          clampedValues.push(`vibrance ${amt} → ${clampedAmt}`);
+        }
+        
+        stackManager.addVibrance({ amt: clampedAmt });
+        appliedOps.push(`Vibrance ${clampedAmt > 0 ? '+' : ''}${clampedAmt}`);
+        break;
+      }
+
+      case 'set_rotate': {
+        const { angleDeg } = call.args;
+        const clampedAngle = Math.max(PLANNER_CLAMPS.angleDeg.min, Math.min(PLANNER_CLAMPS.angleDeg.max, angleDeg));
+        
+        if (clampedAngle !== angleDeg) {
+          clampedValues.push(`rotate ${angleDeg}° → ${clampedAngle}°`);
+        }
+        
+        // Rotation is handled as part of crop operation
+        stackManager.addCrop({ angleDeg: clampedAngle });
+        appliedOps.push(`Rotate ${clampedAngle > 0 ? '+' : ''}${clampedAngle}°`);
+        break;
+      }
+
       case 'set_crop': {
-        const { aspect, rectNorm, angleDeg } = call.args;
+        let { aspect, rectNorm } = call.args;
         const options: any = {};
 
         if (aspect) {
@@ -921,34 +1055,33 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           appliedOps.push(`Crop ${aspect}`);
         }
         if (rectNorm) {
+          // Map preview coordinates to original if we're in vision mode (Phase 7d)
+          if (withImage && lastLoadedImage) {
+            const imageMeta = await getImageMetadata(lastLoadedImage, client);
+            // Map each corner of the rectangle
+            const [x, y, w, h] = rectNorm;
+            const topLeft = mapPreviewToOriginal(x, y, stackManager.getStack(), imageMeta.width, imageMeta.height);
+            const bottomRight = mapPreviewToOriginal(x + w, y + h, stackManager.getStack(), imageMeta.width, imageMeta.height);
+            
+            const mappedRect: [number, number, number, number] = [
+              topLeft.x,
+              topLeft.y,
+              bottomRight.x - topLeft.x,
+              bottomRight.y - topLeft.y
+            ];
+            
+            if (topLeft.clamped || bottomRight.clamped) {
+              clampedValues.push(
+                `crop rect mapped to [${mappedRect.map(v => v.toFixed(2)).join(',')}] from [${rectNorm.map(v => v.toFixed(2)).join(',')}]`
+              );
+            }
+            rectNorm = mappedRect;
+          }
+          
           options.rectNorm = rectNorm;
           if (!aspect) {
             appliedOps.push(`Crop rect`);
           }
-        }
-        if (angleDeg !== undefined) {
-          // Check if we have an existing crop with angle to accumulate with
-          const currentStack = stackManager.getStack();
-          let lastCropOp: any = null;
-          for (let i = currentStack.ops.length - 1; i >= 0; i--) {
-            const op = currentStack.ops[i] as any;
-            if (op.op === 'crop') {
-              lastCropOp = op;
-              break;
-            }
-          }
-
-          let finalAngle = angleDeg;
-          if (lastCropOp && lastCropOp.angleDeg !== undefined) {
-            finalAngle = lastCropOp.angleDeg + angleDeg;
-          }
-
-          const clampedAngle = Math.max(PLANNER_CLAMPS.angleDeg.min, Math.min(PLANNER_CLAMPS.angleDeg.max, finalAngle));
-          if (clampedAngle !== finalAngle) {
-            clampedValues.push(`angle ${finalAngle}° → ${clampedAngle}°`);
-          }
-          options.angleDeg = clampedAngle;
-          appliedOps.push(`Rotate ${clampedAngle.toFixed(1)}°`);
         }
 
         if (Object.keys(options).length > 0) {
@@ -983,7 +1116,17 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
 
       case 'export_image': {
         hasExport = true;
-        // Export will be handled after rendering
+        // Export will be handled after rendering (not counted as applied yet)
+        droppedOps.push('export_image (deferred)');
+        break;
+      }
+      
+      default: {
+        // Unknown operation
+        const unknownCall = call as any;
+        if (unknownCall.fn) {
+          droppedOps.push(unknownCall.fn);
+        }
         break;
       }
     }
@@ -991,7 +1134,10 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
 
     // End apply operations span
     applySpan.setAttributes({
-      'operations.applied': appliedOps.join(', '),
+      'operations.applied': appliedOps.length,
+      'operations.applied_list': appliedOps.join(', '),
+      'operations.dropped': droppedOps.length,
+      'operations.dropped_list': droppedOps.join(', '),
       'operations.clamped_count': clampedValues.length,
     });
   }); // End withSpan for operations.apply
@@ -1041,9 +1187,16 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       const toolCallId = 'ask_render';
       const stack = stackManager.getStack();
       
+      // Get image dimensions from metadata cache
+      const imageMeta = lastLoadedImage ? imageMetadataCache.get(lastLoadedImage) : undefined;
+      const opsListStr = stack.ops.map(op => op.op).join(',');
+      
       renderSpan.setAttributes({
         'preview.stack_size': stack.ops.length,
         'preview.max_px': 1024,
+        'preview.image_width': imageMeta?.width || 0,
+        'preview.image_height': imageMeta?.height || 0,
+        'preview.ops_list': opsListStr
       });
 
       notify('session/update', {
@@ -1061,6 +1214,8 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
             uri: lastLoadedImage,
             editStack: stack,
             maxPx: 1024,
+            format: 'jpeg',
+            quality: 60,  // Reduced for optimization
           },
         });
 
@@ -1098,11 +1253,52 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     }); // End preview.render span
   }
 
-  // Handle export if requested
+  // Store export info for processing after span closes
   if (hasExport) {
     const exportCall = calls.find((c) => c.fn === 'export_image');
     if (exportCall) {
-      const args = exportCall.args || {};
+      exportInfo = { 
+        call: exportCall, 
+        stackManager,
+        client,
+        lastLoadedImage,
+        sessionId,
+        cwd,
+        requestId
+      };
+      // Just notify that export will happen
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: '\nExport requested, will process after preview...' },
+      });
+    }
+  }
+  }); // End of withSpan
+  
+  // Handle export outside of main span
+  if (exportInfo) {
+    await withSpan('export.execute', async (exportSpan) => {
+      const { 
+        call: exportCall, 
+        stackManager, 
+        client,
+        lastLoadedImage,
+        sessionId,
+        cwd,
+        requestId
+      } = exportInfo!;
+      const args = (exportCall as any).args || {};
+      
+      // Set export span attributes
+      exportSpan.setAttributes({
+        'export.source': lastLoadedImage,
+        'export.format': args.format || 'jpeg',
+        'export.quality': args.quality || 90,
+        'export.has_destination': !!args.dst,
+        'export.overwrite': args.overwrite || false,
+        'export.stack_size': stackManager.getStack().ops.length
+      });
 
       // Build export options
       const exportOptions: any = {
@@ -1124,6 +1320,12 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         dstPath = path.resolve(cwd, 'Export', `${origName}_edit${ext}`);
       }
 
+      // Add span event for destination path
+      addSpanEvent('export.destination_resolved', {
+        'export.destination': dstPath,
+        'export.destination_directory': path.dirname(dstPath)
+      });
+      
       // Request permission for export
       const permId = requestId + 2000; // Use offset to avoid ID collision
       const operations: PermissionOperation[] = [
@@ -1151,18 +1353,70 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
         },
       };
 
-      const approved = await new Promise<boolean>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          pendingPermissions.delete(permId);
-          logger.line('info', { permission_timeout: permId });
-          resolve(false); // Auto-deny on timeout
-        }, 15000); // 15 second timeout
+      // Wrap permission request in a span
+      const approved = await withSpan('permission.request', async (permSpan) => {
+        permSpan.setAttributes({
+          'permission.destination': path.basename(dstPath),
+          'permission.operations_count': operations.length,
+          'permission.bytes_approx': operations.reduce((sum, op) => sum + (op.bytesApprox || 0), 0)
+        });
+        
+        // Check for auto-approve environment variable
+        const autoApprove = process.env.PHOTO_AGENT_AUTO_APPROVE_EXPORT === 'true';
+        
+        if (autoApprove) {
+          // Auto-approve exports for testing
+          logger.line('info', { 
+            event: 'export_auto_approved',
+            reason: 'PHOTO_AGENT_AUTO_APPROVE_EXPORT=true',
+            destination: path.basename(dstPath)
+          });
+          
+          // Add span event for auto-approval
+          addSpanEvent('permission.auto_approved', {
+            'permission.auto_approve': true,
+            'permission.destination': path.basename(dstPath)
+          });
+          
+          permSpan.setAttributes({
+            'permission.auto_approved': true,
+            'permission.granted': true
+          });
+          
+          return true;
+        } else {
+          // Normal permission flow
+          const result = await new Promise<boolean>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              pendingPermissions.delete(permId);
+              logger.line('info', { permission_timeout: permId });
+              addSpanEvent('permission.timeout');
+              permSpan.setAttributes({
+                'permission.timeout': true,
+                'permission.granted': false
+              });
+              resolve(false); // Auto-deny on timeout
+            }, 15000); // 15 second timeout
 
-        pendingPermissions.set(permId, { resolve, reject, timeout });
-        send(permissionRequest);
+            pendingPermissions.set(permId, { resolve, reject, timeout });
+            send(permissionRequest);
+          });
+          
+          permSpan.setAttributes({
+            'permission.granted': result
+          });
+          
+          return result;
+        }
       });
 
       if (approved) {
+        // Add span event for permission granted
+        addSpanEvent('export.permission_granted');
+        exportSpan.setAttributes({
+          'export.permission_granted': true
+        });
+        
         const toolCallId = 'ask_export';
 
         notify('session/update', {
@@ -1181,14 +1435,27 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           const stack = stackManager.getStack();
           const dstUri = pathToFileURL(dstPath).href;
 
-          const exportResult = await client.callTool({
-            name: 'commit_version',
-            arguments: {
-              uri: lastLoadedImage,
-              editStack: stack,
-              dstUri,
-              ...exportOptions,
-            },
+          // Wrap MCP call in span
+          const exportResult = await withSpan('mcp.commit_version', async (mcpSpan) => {
+            mcpSpan.setAttributes({
+              'mcp.source': path.basename(lastLoadedImage),
+              'mcp.destination': path.basename(dstPath),
+              'mcp.format': exportOptions.format,
+              'mcp.quality': exportOptions.quality,
+              'mcp.stack_size': stack.ops.length
+            });
+            
+            const result = await client.callTool({
+              name: 'commit_version',
+              arguments: {
+                uri: lastLoadedImage,
+                editStack: stack,
+                dstUri,
+                ...exportOptions,
+              },
+            });
+            
+            return result;
           });
 
           // Log export result telemetry
@@ -1198,6 +1465,28 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
             format: exportOptions.format,
             quality: exportOptions.quality,
             success: true,
+          });
+          
+          // Get actual file size
+          let exportBytes = 0;
+          try {
+            const stats = await fs.stat(dstPath);
+            exportBytes = stats.size;
+          } catch (e) {
+            // Ignore stat errors
+          }
+          
+          // Add span event for successful export
+          addSpanEvent('export.completed', {
+            'export.destination': dstPath,
+            'export.format': exportOptions.format,
+            'export.quality': exportOptions.quality,
+            'export.bytes': exportBytes
+          });
+          exportSpan.setAttributes({
+            'export.success': true,
+            'export.final_destination': dstPath,
+            'export.bytes': exportBytes
           });
 
           notify('session/update', {
@@ -1214,15 +1503,21 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           });
         }
       } else {
+        // Add span event for permission denied
+        addSpanEvent('export.permission_denied');
+        exportSpan.setAttributes({
+          'export.permission_granted': false,
+          'export.cancelled': true
+        });
+        
         notify('session/update', {
           sessionId,
           sessionUpdate: 'agent_message_chunk',
           content: { type: 'text', text: 'Export cancelled by user' },
         });
       }
-    }
+    });
   }
-  }); // End of withSpan
 }
 
 async function handleEditCommand(command: string, sessionId: string): Promise<void> {
@@ -1544,6 +1839,8 @@ async function handleEditCommand(command: string, sessionId: string): Promise<vo
         uri: lastLoadedImage,
         editStack,
         maxPx: 1024,
+        format: 'jpeg',
+        quality: 80,
       },
     });
 

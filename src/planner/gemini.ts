@@ -213,12 +213,7 @@ export class GeminiPlanner implements Planner {
           normalized: JSON.stringify(normalizedCall),
         });
 
-        // Phase 7c: In vision mode, only allow WB operations
-        if (hasVision && !normalizedCall.fn?.startsWith('set_white_balance')) {
-          logger.line('info', { event: 'dropped_non_wb', fn: normalizedCall.fn });
-          droppedCalls.push(normalizedCall.fn || 'unknown');
-          continue;
-        }
+        // Phase 7d: All operations are now allowed in vision mode
 
         const validated = validateAndClampCall(normalizedCall);
         if (validated) {
@@ -226,7 +221,7 @@ export class GeminiPlanner implements Planner {
 
           // Check if values were clamped
           const clamped = getClampedValues(normalizedCall, validated);
-          clampedValues.push(...clamped);
+          clampedValues.push(...clamped.map(c => `${c.name}: ${c.from} → ${c.to}`));
         } else {
           logger.line('info', { event: 'dropped_invalid', fn: normalizedCall.fn });
           droppedCalls.push(normalizedCall.fn || 'unknown');
@@ -256,6 +251,18 @@ export class GeminiPlanner implements Planner {
         notes.push(`Truncated to ${this.config.maxCalls} calls (from ${parsed.calls.length})`);
       }
 
+      // Log enhanced telemetry
+      logger.line('info', {
+        event: 'planner_complete',
+        calls_list: validCalls.map(c => c.fn).join(','),
+        calls_planned: parsed.calls.length,
+        calls_valid: validCalls.length,
+        calls_dropped: droppedCalls.length,
+        values_clamped: clampedValues.length,
+        has_vision: hasVision,
+        latencyMs: latencyMs,
+      });
+
       return { calls: validCalls, notes };
     } catch (error: any) {
       // Log fallback
@@ -274,6 +281,7 @@ export class GeminiPlanner implements Planner {
         reason,
         error: error.message,
         latencyMs: Date.now() - startTime,
+        has_vision: !!input.imageB64,
       });
 
       // Fall back to mock planner
@@ -350,11 +358,53 @@ Your task is to analyze the user's intent and generate the appropriate sequence 
       - "lifted" or "faded" suggests amt -10 to -30
     </usage_notes>
   </tool>
+
+  <tool name="set_saturation">
+    <description>Adjusts the color saturation (intensity) of the image</description>
+    <parameters>
+      <param name="amt" type="number" min="-100" max="100" required="true">
+        Saturation amount. Positive increases color intensity, negative decreases. -100 makes image black and white.
+      </param>
+    </parameters>
+    <usage_notes>
+      - "more colorful" or "vibrant" means amt +20 to +40
+      - "less colorful" or "muted" means amt -20 to -40
+      - "black and white" or "desaturated" means amt -100
+    </usage_notes>
+  </tool>
+
+  <tool name="set_vibrance">
+    <description>Adjusts vibrance (smart saturation that protects skin tones)</description>
+    <parameters>
+      <param name="amt" type="number" min="-100" max="100" required="true">
+        Vibrance amount. Affects less-saturated colors more than already vibrant ones.
+      </param>
+    </parameters>
+    <usage_notes>
+      - Better than saturation for portraits with people
+      - "vibrant" means amt +30 to +50
+      - Preserves natural skin tones while enhancing other colors
+    </usage_notes>
+  </tool>
 </color_adjustments>
 
 <geometry_adjustments>
+  <tool name="set_rotate">
+    <description>Rotates the image to straighten horizons or correct tilt</description>
+    <parameters>
+      <param name="angleDeg" type="number" min="-45" max="45" required="true">
+        Rotation angle in degrees. Positive rotates clockwise, negative counter-clockwise.
+      </param>
+    </parameters>
+    <usage_notes>
+      - "straighten" or "level horizon" typically needs 1-3 degrees
+      - "rotate slightly" means 5-10 degrees
+      - "rotate significantly" means 15-30 degrees
+    </usage_notes>
+  </tool>
+
   <tool name="set_crop">
-    <description>Crops the image to a specific aspect ratio or rotates it</description>
+    <description>Crops the image to a specific aspect ratio or custom rectangle</description>
     <parameters>
       <param name="aspect" type="string" enum="1:1,3:2,4:3,16:9" required="false">
         Aspect ratio for cropping. Use "1:1" for square, "16:9" for wide/cinematic
@@ -362,15 +412,12 @@ Your task is to analyze the user's intent and generate the appropriate sequence 
       <param name="rectNorm" type="array[4]" required="false">
         Custom crop rectangle [x, y, width, height] in 0-1 normalized coordinates
       </param>
-      <param name="angleDeg" type="number" min="-45" max="45" required="false">
-        Rotation angle in degrees for straightening
-      </param>
     </parameters>
     <usage_notes>
       - "square" or "instagram" means aspect: "1:1"
       - "wide" or "cinematic" means aspect: "16:9"
-      - "straighten" requires angleDeg parameter
-      - Can combine aspect and angleDeg in one call
+      - "portrait" typically means aspect: "3:2" or "4:3"
+      - rectNorm allows precise custom cropping
     </usage_notes>
   </tool>
 </geometry_adjustments>
@@ -542,46 +589,166 @@ Current image state:
   private buildVisionSystemPrompt(state?: PlannerState): string {
     return `<role>
 You are an expert photo editing assistant with visual analysis capabilities.
-For this request, you can see the image and should analyze it to determine the best white balance correction.
-In Phase 7c, you can ONLY propose white balance adjustments.
+You can see the image and should analyze it to determine the best editing operations.
+In Phase 7d, you can use the FULL tool catalog to edit images based on visual analysis.
 </role>
 
-<available_tools>
-<tool name="set_white_balance_temp_tint">
-  <description>Adjusts the color temperature and tint of the image</description>
-  <parameters>
-    <param name="temp" type="number" min="-100" max="100" required="true">
-      Temperature adjustment. Positive values make image warmer (more orange), negative values make it cooler (more blue)
-    </param>
-    <param name="tint" type="number" min="-100" max="100" required="true">
-      Tint adjustment. Positive values add magenta, negative values add green.
-    </param>
-  </parameters>
-</tool>
+<tool_catalog>
+<color_adjustments>
+  <tool name="set_white_balance_temp_tint">
+    <description>Adjusts the color temperature and tint of the image</description>
+    <parameters>
+      <param name="temp" type="number" min="-100" max="100" required="true">
+        Temperature adjustment. Positive values make image warmer (more orange), negative values make it cooler (more blue)
+      </param>
+      <param name="tint" type="number" min="-100" max="100" required="true">
+        Tint adjustment. Positive values add magenta, negative values add green.
+      </param>
+    </parameters>
+    <vision_notes>
+      - Analyze overall color cast in the image
+      - Look for areas that should be neutral (whites, grays)
+      - Warm casts appear orange/yellow, cool casts appear blue
+    </vision_notes>
+  </tool>
 
-<tool name="set_white_balance_gray">
-  <description>Sets white balance by picking a neutral gray point in the image</description>
-  <parameters>
-    <param name="x" type="number" min="0" max="1" required="true">X coordinate of gray point (0-1 normalized to the image you see)</param>
-    <param name="y" type="number" min="0" max="1" required="true">Y coordinate of gray point (0-1 normalized to the image you see)</param>
-  </parameters>
-  <usage_notes>
-  - Use this when you can identify a clear neutral target in the image (white, gray, or black area)
-  - Coordinates are normalized: (0,0) is top-left, (1,1) is bottom-right
-  - The agent will automatically map these to the original image space
-  </usage_notes>
-</tool>
-</available_tools>
+  <tool name="set_white_balance_gray">
+    <description>Sets white balance by picking a neutral gray point in the image</description>
+    <parameters>
+      <param name="x" type="number" min="0" max="1" required="true">X coordinate of gray point (0-1 normalized to the image you see)</param>
+      <param name="y" type="number" min="0" max="1" required="true">Y coordinate of gray point (0-1 normalized to the image you see)</param>
+    </parameters>
+    <vision_notes>
+      - Identify neutral references: white shirts, gray concrete, white walls
+      - Coordinates are for the preview you see: (0,0) is top-left, (1,1) is bottom-right
+      - The agent will map these to the original image space
+    </vision_notes>
+  </tool>
 
-<decision_logic>
-1. Analyze the attached image for color cast
-2. If you can identify a clear neutral reference (white shirt, gray concrete, etc.), prefer set_white_balance_gray
-3. Otherwise, use set_white_balance_temp_tint based on the overall color cast
-4. For blue casts: use positive temp values
-5. For orange/warm casts: use negative temp values
-6. For green casts: use positive tint values
-7. For magenta casts: use negative tint values
-</decision_logic>
+  <tool name="set_exposure">
+    <description>Adjusts the overall brightness/exposure of the image</description>
+    <parameters>
+      <param name="ev" type="number" min="-3" max="3" required="true">
+        Exposure value in stops. +1 doubles brightness, -1 halves it.
+      </param>
+    </parameters>
+    <vision_notes>
+      - Analyze histogram distribution and overall brightness
+      - Underexposed images have details lost in shadows
+      - Overexposed images have blown highlights
+      - "Lifted shadows" typically needs +0.3 to +0.5 ev
+    </vision_notes>
+  </tool>
+
+  <tool name="set_contrast">
+    <description>Adjusts the contrast (difference between lights and darks)</description>
+    <parameters>
+      <param name="amt" type="number" min="-100" max="100" required="true">
+        Contrast amount. Positive increases contrast, negative decreases it.
+      </param>
+    </parameters>
+    <vision_notes>
+      - Low contrast images appear flat or washed out
+      - High contrast has strong blacks and whites
+      - Foggy/hazy images benefit from increased contrast
+    </vision_notes>
+  </tool>
+
+  <tool name="set_saturation">
+    <description>Adjusts the color saturation of the image</description>
+    <parameters>
+      <param name="amt" type="number" min="-100" max="100" required="true">
+        Saturation amount. Positive increases color intensity, negative decreases it.
+      </param>
+    </parameters>
+    <vision_notes>
+      - Analyze current color intensity
+      - Oversaturated images have unnatural, neon-like colors
+      - Undersaturated images appear dull or faded
+      - -100 creates black and white
+    </vision_notes>
+  </tool>
+
+  <tool name="set_vibrance">
+    <description>Adjusts vibrance (smart saturation that protects skin tones)</description>
+    <parameters>
+      <param name="amt" type="number" min="-100" max="100" required="true">
+        Vibrance amount. Affects less-saturated colors more than already vibrant ones.
+      </param>
+    </parameters>
+    <vision_notes>
+      - Better than saturation for portraits
+      - Enhances muted colors without oversaturating
+      - Preserves skin tone naturalness
+    </vision_notes>
+  </tool>
+</color_adjustments>
+
+<geometry_adjustments>
+  <tool name="set_rotate">
+    <description>Rotates the image to straighten horizons or correct tilt</description>
+    <parameters>
+      <param name="angleDeg" type="number" min="-45" max="45" required="true">
+        Rotation angle in degrees. Positive rotates clockwise.
+      </param>
+    </parameters>
+    <vision_notes>
+      - Look for tilted horizons, buildings, or vertical lines
+      - Ocean/lake horizons should be perfectly level
+      - Buildings and poles should be vertical
+      - Small adjustments (1-3°) often sufficient
+    </vision_notes>
+  </tool>
+
+  <tool name="set_crop">
+    <description>Crops the image to improve composition or aspect ratio</description>
+    <parameters>
+      <param name="aspect" type="string" enum="1:1,3:2,4:3,16:9" required="false">
+        Aspect ratio for cropping
+      </param>
+      <param name="rectNorm" type="array[4]" required="false">
+        Custom crop rectangle [x, y, width, height] in 0-1 normalized coordinates of the preview
+      </param>
+    </parameters>
+    <vision_notes>
+      - Apply rule of thirds for better composition
+      - Remove distracting elements at edges
+      - "square" or "instagram" → aspect: "1:1"
+      - "wide" or "cinematic" → aspect: "16:9"
+      - For rectNorm: coordinates are for the preview you see
+      - The agent will map rectNorm to original image space
+    </vision_notes>
+  </tool>
+</geometry_adjustments>
+
+<history_operations>
+  <tool name="undo"><description>Undo the last operation</description></tool>
+  <tool name="redo"><description>Redo a previously undone operation</description></tool>
+  <tool name="reset"><description>Reset to original image, removing all edits</description></tool>
+</history_operations>
+
+<export_operations>
+  <tool name="export_image">
+    <description>Export the edited image to disk</description>
+    <parameters>
+      <param name="dst" type="string" required="false">Destination file path</param>
+      <param name="format" type="string" enum="jpeg,png" required="false">Output format</param>
+      <param name="quality" type="number" min="1" max="100" required="false">JPEG quality (1-100)</param>
+      <param name="overwrite" type="boolean" required="false">Whether to overwrite existing files</param>
+    </parameters>
+  </tool>
+</export_operations>
+</tool_catalog>
+
+<vision_analysis_approach>
+1. Examine the overall image quality and issues
+2. Check for color casts by looking at areas that should be neutral
+3. Assess exposure by analyzing shadow and highlight detail
+4. Evaluate contrast by looking at tonal range
+5. Check if horizon or vertical lines need straightening
+6. Consider composition improvements through cropping
+7. Determine if colors need enhancement via saturation/vibrance
+</vision_analysis_approach>
 
 ${
   state
@@ -593,10 +760,11 @@ ${this.buildStateContext(state)}
 
 <output_requirements>
 - Return ONLY valid JSON: {"calls": [array of operations]}
-- You may only return white balance operations
-- All other operations will be ignored in Phase 7c
-- Maximum 1 white balance operation per response
-- When identifying a gray point, choose the most reliable neutral area
+- You can use ANY tool from the catalog based on visual analysis
+- Maximum ${this.config.maxCalls} operations per response
+- Operations are applied in order: color adjustments → geometry adjustments → export
+- For coordinates (gray point, crop rect): use the preview image space (0-1 normalized)
+- Include export operations if requested by the user
 </output_requirements>`;
   }
 }

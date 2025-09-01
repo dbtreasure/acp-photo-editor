@@ -59,7 +59,6 @@ describe('Schema round-trip validation', () => {
           fn: 'set_crop',
           args: {
             aspect: '16:9',
-            angleDeg: 5,
             rectNorm: [0.1, 0.1, 0.8, 0.8],
           },
         },
@@ -152,7 +151,8 @@ describe('Schema round-trip validation', () => {
         { fn: 'set_exposure', args: { ev: 0.3 } },
         { fn: 'set_contrast', args: { amt: 25 } },
         // Then geometry
-        { fn: 'set_crop', args: { aspect: '16:9', angleDeg: 2 } },
+        { fn: 'set_rotate', args: { angleDeg: 2 } },
+        { fn: 'set_crop', args: { aspect: '16:9' } },
         // Finally export
         { fn: 'export_image', args: { dst: 'final.jpg', format: 'jpeg', quality: 90 } },
       ];

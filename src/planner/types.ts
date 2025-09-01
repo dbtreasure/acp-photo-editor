@@ -6,12 +6,14 @@ export type PlannedCall =
   | { fn: 'set_white_balance_gray'; args: { x: number; y: number } }
   | { fn: 'set_exposure'; args: { ev: number } }
   | { fn: 'set_contrast'; args: { amt: number } }
+  | { fn: 'set_saturation'; args: { amt: number } }
+  | { fn: 'set_vibrance'; args: { amt: number } }
+  | { fn: 'set_rotate'; args: { angleDeg: number } }
   | {
       fn: 'set_crop';
       args: {
         aspect?: '1:1' | '3:2' | '4:3' | '16:9';
         rectNorm?: [number, number, number, number];
-        angleDeg?: number;
       };
     }
   | { fn: 'undo' }
@@ -50,6 +52,8 @@ export const PLANNER_CLAMPS = {
   tint: { min: -100, max: 100 },
   ev: { min: -3, max: 3 },
   contrast: { min: -100, max: 100 },
+  saturation: { min: -100, max: 100 },
+  vibrance: { min: -100, max: 100 },
   angleDeg: { min: -45, max: 45 },
   quality: { min: 1, max: 100 },
   grayPoint: { min: 0, max: 1 }, // x,y coordinates
