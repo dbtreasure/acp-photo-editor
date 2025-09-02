@@ -212,6 +212,11 @@ export class GeminiPlanner implements Planner {
       if (!parsed || !Array.isArray(parsed.calls)) {
         throw new Error('Invalid response structure');
       }
+      
+      // Phase 7f: Extract confidence and clarification fields
+      const confidence = typeof parsed.confidence === 'number' ? 
+        Math.max(0, Math.min(1, parsed.confidence)) : 1.0;
+      const needsClarification = parsed.needsClarification || undefined;
 
       // Validate and clamp calls
       const validCalls: PlannedCall[] = [];
@@ -281,9 +286,16 @@ export class GeminiPlanner implements Planner {
         values_clamped: clampedValues.length,
         has_vision: hasVision,
         latencyMs: latencyMs,
+        confidence: confidence,
+        needs_clarification: !!needsClarification,
       });
 
-      return { calls: validCalls, notes };
+      return { 
+        calls: validCalls, 
+        notes,
+        confidence,
+        needsClarification
+      };
     } catch (error: any) {
       // Log fallback
       const reason =
@@ -556,12 +568,20 @@ ${this.buildStateContext(state)}
 
 <output_requirements>
 - Return ONLY valid JSON, no markdown, no explanations
-- Format: {"calls": [array of operations]}
+- Format: {"calls": [array of operations], "confidence": 0.0-1.0, "needsClarification": {...}}
 - Each operation MUST have "fn" and "args" keys
 - All required parameters must be present
 - Maximum ${this.config.maxCalls} operations per response
 - Use exact parameter names as specified in tool_catalog
 - When in doubt, prefer conservative values over extreme ones
+- IMPORTANT for Phase 7f:
+  * Include "confidence" (0-1) indicating how certain you are about the interpretation
+  * If user intent is ambiguous (confidence < 0.5), set "needsClarification" with:
+    - "question": clarifying question to ask
+    - "options": array of possible interpretations (optional)
+    - "context": additional context (optional)
+  * Common ambiguous terms: "cinematic", "pop", "punch", "moody", "dramatic", "better"
+  * When clarification is needed, still provide your best guess in "calls" but with low confidence
 </output_requirements>`;
   }
 

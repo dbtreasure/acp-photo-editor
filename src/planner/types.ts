@@ -40,6 +40,13 @@ export interface PlannerInput {
 export interface PlannerOutput {
   calls: PlannedCall[];
   notes?: string[]; // Optional notes about processing (e.g., ignored terms, clamped values)
+  // Phase 7f: Clarification and confidence support
+  needsClarification?: {
+    question: string;
+    options?: string[];  // Optional multiple choice
+    context?: string;    // Additional context for the question
+  };
+  confidence?: number;   // 0-1 confidence score (1 = very confident)
 }
 
 export interface Planner {

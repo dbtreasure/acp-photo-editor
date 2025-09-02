@@ -6,6 +6,11 @@ export class MockPlanner implements Planner {
     const calls: PlannedCall[] = [];
     const notes: string[] = [];
     const ignoredTerms: string[] = [];
+    
+    // Phase 7f: Confidence scoring and ambiguity detection
+    let confidence = 1.0; // Start with high confidence
+    const ambiguousTerms = ['pop', 'punch', 'cinematic', 'moody', 'dramatic', 'better', 'nice', 'good'];
+    const clarificationNeeded = ambiguousTerms.some(term => text.includes(term));
 
     // Track cumulative adjustments for incremental commands
     let totalTemp = 0;
@@ -212,9 +217,42 @@ export class MockPlanner implements Planner {
     // Add note about ignored terms
     if (ignoredTerms.length > 0) {
       notes.push(`Ignored terms: ${ignoredTerms.join(', ')}`);
+      // Reduce confidence for each ignored term
+      confidence -= ignoredTerms.length * 0.1;
+    }
+    
+    // Phase 7f: Check if clarification is needed
+    if (clarificationNeeded && calls.length === 0) {
+      // We found ambiguous terms but couldn't generate any specific operations
+      return {
+        calls: [],
+        notes,
+        needsClarification: {
+          question: `"${text}" is ambiguous. What kind of edit would you like?`,
+          options: [
+            'High contrast with deep shadows',
+            'Warm and vibrant colors',
+            'Cool and moody tones',
+            'Bright and airy feel'
+          ],
+          context: 'I can help you achieve different looks. Please be more specific.'
+        },
+        confidence: 0.3
+      };
+    }
+    
+    // Adjust confidence based on operation clarity
+    if (calls.length === 0) {
+      confidence = 0.2; // Very low confidence if no operations found
+    } else if (calls.length > 5) {
+      confidence = Math.max(0.5, confidence - 0.1); // Many operations might indicate over-interpretation
     }
 
-    return { calls, notes };
+    return { 
+      calls, 
+      notes,
+      confidence: Math.max(0.1, Math.min(1.0, confidence)) // Clamp between 0.1 and 1.0
+    };
   }
 
   private isNumberWithSign(str: string): boolean {

@@ -84,6 +84,19 @@ const pendingPermissions = new Map<
   }
 >();
 
+// Phase 7f: User input request tracking
+const pendingInputRequests = new Map<
+  number,
+  {
+    resolve: (value: string) => void;
+    reject: (reason?: any) => void;
+    timeout: NodeJS.Timeout;
+  }
+>();
+
+// Request ID counter for notifications
+let requestIdCounter = 1000;
+
 // Read stdin as NDJSON
 createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
   logger.line('recv', obj);
@@ -97,6 +110,18 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
     // Check if permission was granted
     const approved = obj.result?.approved === true;
     pending.resolve(approved);
+    return;
+  }
+  
+  // Phase 7f: Check if this is a response to a pending input request
+  if (obj && obj.jsonrpc === '2.0' && typeof obj.id === 'number' && pendingInputRequests.has(obj.id)) {
+    const pending = pendingInputRequests.get(obj.id)!;
+    clearTimeout(pending.timeout);
+    pendingInputRequests.delete(obj.id);
+    
+    // Get the user input from the response
+    const userInput = obj.result?.input || obj.result?.answer || '';
+    pending.resolve(userInput);
     return;
   }
 
@@ -181,6 +206,63 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
       logger.line('info', { resource_link: link });
     });
 
+    // Phase 7f: Check for confirmation responses (accept with or without colon)
+    const lowerText = text.toLowerCase();
+    if (lowerText === ':yes' || lowerText === ':no' || lowerText === 'yes' || lowerText === 'no') {
+      const pendingPlanKey = `pending_plan_${currentSessionId}`;
+      const pendingPlan = (global as any)[pendingPlanKey];
+      
+      if (pendingPlan && Date.now() - pendingPlan.timestamp < 60000) { // 1 minute timeout
+        // Clear the pending plan
+        delete (global as any)[pendingPlanKey];
+        
+        if (lowerText === ':yes' || lowerText === 'yes') {
+          // Apply the pending plan
+          notify('session/update', {
+            sessionId: currentSessionId,
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '✅ Applying confirmed changes...' },
+          });
+          
+          // Apply the stored operations
+          handlePendingPlan(pendingPlan.calls, currentSessionId, params.cwd || process.cwd()).then(
+            () => {
+              if (!cancelled) {
+                send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+              } else {
+                send({ jsonrpc: '2.0', id, result: { stopReason: 'cancelled' } });
+              }
+            },
+            (err) => {
+              logger.line('error', { pending_plan_failed: err.message });
+              notify('session/update', {
+                sessionId: currentSessionId,
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: `Error applying plan: ${err.message}` },
+              });
+              send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+            }
+          );
+        } else {
+          // Cancelled
+          notify('session/update', {
+            sessionId: currentSessionId,
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '❌ Plan cancelled' },
+          });
+          send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+        }
+      } else {
+        notify('session/update', {
+          sessionId: currentSessionId,
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'No pending plan to confirm' },
+        });
+        send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+      }
+      return;
+    }
+    
     // Check for :ask command (Phase 7a)
     if (text.startsWith(':ask ')) {
       handleAskCommand(text, currentSessionId, params.cwd || process.cwd(), id).then(
@@ -543,6 +625,107 @@ function notify(method: string, params: any) {
   send(msg);
 }
 
+// Phase 7f: Request user input for clarification or confirmation
+async function requestUserInput(
+  sessionId: string,
+  prompt: string,
+  options?: string[],
+  context?: string,
+  timeoutMs: number = 30000
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const requestId = requestIdCounter++;
+    
+    // Set up timeout
+    const timeout = setTimeout(() => {
+      pendingInputRequests.delete(requestId);
+      reject(new Error('User input timeout'));
+    }, timeoutMs);
+    
+    // Store pending request
+    pendingInputRequests.set(requestId, {
+      resolve,
+      reject,
+      timeout,
+    });
+    
+    // Send request_input notification
+    const request: any = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'request_input',
+      params: {
+        sessionId,
+        prompt,
+        ...(options && { options }),
+        ...(context && { context }),
+      }
+    };
+    
+    logger.line('info', { event: 'request_input', requestId, prompt });
+    send(request);
+  });
+}
+
+// Helper to format plan preview for confirmation
+function formatPlanPreview(calls: PlannedCall[]): string {
+  if (calls.length === 0) {
+    return 'No operations planned.';
+  }
+  
+  const lines = ['📋 Planned Operations:'];
+  calls.forEach((call, i) => {
+    let description = '';
+    switch (call.fn) {
+      case 'set_white_balance_temp_tint':
+        if ('args' in call) {
+          const { temp, tint } = call.args as any;
+          description = `White balance: temp ${temp > 0 ? '+' : ''}${temp}, tint ${tint > 0 ? '+' : ''}${tint}`;
+        }
+        break;
+      case 'set_exposure':
+        if ('args' in call) {
+          const { ev } = call.args as any;
+          description = `Exposure: ${ev > 0 ? '+' : ''}${ev} EV`;
+        }
+        break;
+      case 'set_contrast':
+        if ('args' in call) {
+          const { amt } = call.args as any;
+          description = `Contrast: ${amt > 0 ? '+' : ''}${amt}`;
+        }
+        break;
+      case 'set_saturation':
+        if ('args' in call) {
+          const { amt } = call.args as any;
+          description = `Saturation: ${amt > 0 ? '+' : ''}${amt}`;
+        }
+        break;
+      case 'set_vibrance':
+        if ('args' in call) {
+          const { amt } = call.args as any;
+          description = `Vibrance: ${amt > 0 ? '+' : ''}${amt}`;
+        }
+        break;
+      case 'set_crop':
+        if ('args' in call) {
+          const args = call.args as any;
+          description = args.aspect ? `Crop to ${args.aspect}` : 'Custom crop';
+        }
+        break;
+      case 'export_image':
+        description = 'Export image';
+        break;
+      default:
+        description = call.fn.replace(/_/g, ' ');
+    }
+    lines.push(`${i + 1}. ✓ ${description}`);
+  });
+  
+  lines.push('\nApply these changes? [yes/no]: ');
+  return lines.join('\n');
+}
+
 // Helper to get image metadata with caching
 async function getImageMetadata(
   uri: string,
@@ -645,7 +828,145 @@ function mapPreviewToOriginal(
   return { x: mappedX, y: mappedY, clamped: wasClamped };
 }
 
+// Phase 7f: Handle applying a pending plan after confirmation
+async function handlePendingPlan(calls: PlannedCall[], sessionId: string, cwd: string): Promise<void> {
+  // Get the current image and stack
+  if (!lastLoadedImage) {
+    throw new Error('No image loaded');
+  }
+  
+  const stackManager = imageStacks.get(lastLoadedImage);
+  if (!stackManager) {
+    throw new Error('No edit stack for current image');
+  }
+  
+  const client = mcpClients.get('image');
+  if (!client) {
+    throw new Error('No MCP image server available');
+  }
+  
+  // Apply the operations
+  await withSpan('pending_plan.apply', async (span) => {
+    span.setAttributes({
+      'operations.count': calls.length,
+      'session_id': sessionId
+    });
+    
+    const appliedOps: string[] = [];
+    
+    for (const call of calls) {
+      switch (call.fn) {
+        case 'set_white_balance_temp_tint': {
+          const { temp, tint } = call.args;
+          stackManager.addWhiteBalance({
+            method: 'temp_tint',
+            temp,
+            tint,
+          });
+          appliedOps.push(`WB(temp ${temp > 0 ? '+' : ''}${temp} tint ${tint > 0 ? '+' : ''}${tint})`);
+          break;
+        }
+        
+        case 'set_exposure': {
+          const { ev } = call.args;
+          stackManager.addExposure({ ev });
+          appliedOps.push(`Exposure ${ev > 0 ? '+' : ''}${ev} EV`);
+          break;
+        }
+        
+        case 'set_contrast': {
+          const { amt } = call.args;
+          stackManager.addContrast({ amt });
+          appliedOps.push(`Contrast ${amt > 0 ? '+' : ''}${amt}`);
+          break;
+        }
+        
+        case 'set_saturation': {
+          const { amt } = call.args;
+          stackManager.addSaturation({ amt });
+          appliedOps.push(`Saturation ${amt > 0 ? '+' : ''}${amt}`);
+          break;
+        }
+        
+        case 'set_vibrance': {
+          const { amt } = call.args;
+          stackManager.addVibrance({ amt });
+          appliedOps.push(`Vibrance ${amt > 0 ? '+' : ''}${amt}`);
+          break;
+        }
+        
+        case 'set_crop': {
+          const { aspect } = call.args;
+          if (aspect) {
+            stackManager.addCrop({ aspect });
+            appliedOps.push(`Crop ${aspect}`);
+          }
+          break;
+        }
+      }
+    }
+    
+    span.setAttributes({
+      'operations.applied': appliedOps.length,
+      'operations.list': appliedOps.join(', ')
+    });
+    
+    // Render preview
+    await withSpan('preview.render', async (previewSpan) => {
+      const previewResult = await client.callTool({
+        name: 'render_preview',
+        arguments: {
+          uri: lastLoadedImage,
+          editStack: stackManager.getStack(),
+          maxPx: 512,
+        },
+      });
+      
+      previewSpan.setAttributes({
+        'preview.rendered': true,
+        'preview.max_px': 512
+      });
+      
+      // Send the preview image
+      const content = previewResult.content as any;
+      if (content?.[0]?.type === 'image') {
+        const imageData = content[0].data;
+        const mimeType = content[0].mimeType || 'image/jpeg';
+        
+        notify('session/update', {
+          sessionId,
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'pending_plan_preview',
+          status: 'completed',
+          content: [{ type: 'image', data: imageData, mimeType }],
+        });
+      }
+    });
+    
+    // Summary
+    notify('session/update', {
+      sessionId,
+      sessionUpdate: 'agent_message_chunk',
+      content: { 
+        type: 'text', 
+        text: `✅ Applied ${appliedOps.length} operations: ${appliedOps.join(', ')}`
+      },
+    });
+  });
+}
+
 async function handleAskCommand(command: string, sessionId: string, cwd: string, requestId: number): Promise<void> {
+  // Parse command flags early to determine mode (Phase 7f)
+  let confirmMode = false;
+  let autoConfirm = false;
+  const commandLower = command.toLowerCase();
+  if (commandLower.includes('--confirm')) {
+    confirmMode = true;
+  }
+  if (commandLower.includes('--auto-confirm')) {
+    autoConfirm = true;
+  }
+  
   // Store export info if needed
   let exportInfo: { 
     call: PlannedCall, 
@@ -672,7 +993,10 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       'session_id': sessionId,
       'planner_mode': plannerMode,
       'request_id': requestId,
-      'turn_id': turnCounter
+      'turn_id': turnCounter,
+      // Phase 7f attributes
+      'confirm_mode': confirmMode,
+      'auto_confirm': autoConfirm
     });
 
     // Check if planner is disabled
@@ -708,11 +1032,12 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     throw new Error('No MCP image server available');
   }
 
-  // Parse command for flags (Phase 7c/7e)
+  // Parse command for flags (Phase 7c/7e/7f)
   let withImage = false;
   let withRef: string | null = null;
   let showDeltas = false;
   let dryRun = false;
+  // confirmMode and autoConfirm already parsed at function start
   let askText = command.substring(5).trim(); // Remove ":ask "
 
   // Parse flags
@@ -736,6 +1061,12 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       askText = askText.substring(match[0].length).trim();
     } else if (flag === '--dry-run') {
       dryRun = true;
+      askText = askText.substring(match[0].length).trim();
+    } else if (flag === '--confirm') {
+      confirmMode = true;
+      askText = askText.substring(match[0].length).trim();
+    } else if (flag === '--auto-confirm') {
+      autoConfirm = true;
       askText = askText.substring(match[0].length).trim();
     } else {
       break; // Unknown flag, treat as part of text
@@ -1043,13 +1374,155 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     return { ...result, planningTime };
   });
   
-  const { calls, notes, planningTime } = planResult;
+  const { calls, notes, planningTime, confidence, needsClarification } = planResult;
+  
+  // Phase 7f: Handle clarification if needed
+  let finalCalls = calls;
+  if (needsClarification && !autoConfirm) {
+    await withSpan('clarification.request', async (clarifySpan) => {
+      clarifySpan.setAttributes({
+        'clarification.needed': true,
+        'clarification.confidence': confidence || 0,
+        'clarification.question': needsClarification.question
+      });
+      
+      // Show current best guess
+      if (calls.length > 0) {
+        notify('session/update', {
+          sessionId,
+          sessionUpdate: 'agent_message_chunk',
+          content: { 
+            type: 'text', 
+            text: `❓ I need clarification (confidence: ${(confidence || 0).toFixed(1)})\n\nBest guess: ${calls.map(c => c.fn).join(', ')}`
+          },
+        });
+      }
+      
+      // Format clarification request
+      let clarificationPrompt = needsClarification.question;
+      if (needsClarification.options && needsClarification.options.length > 0) {
+        clarificationPrompt += '\n\nOptions:\n';
+        needsClarification.options.forEach((opt, i) => {
+          clarificationPrompt += `${i + 1}. ${opt}\n`;
+        });
+      }
+      if (needsClarification.context) {
+        clarificationPrompt += `\n${needsClarification.context}`;
+      }
+      
+      try {
+        const userResponse = await requestUserInput(
+          sessionId,
+          clarificationPrompt,
+          needsClarification.options
+        );
+        
+        addSpanEvent('clarification.received', {
+          'clarification.response': userResponse.substring(0, 100)
+        });
+        
+        // Re-run planner with clarification
+        const clarifiedResult = await planner.plan({
+          text: `${askText} (clarification: ${userResponse})`,
+          state: plannerState,
+          imageB64,
+        });
+        
+        finalCalls = clarifiedResult.calls;
+        clarifySpan.setAttributes({
+          'clarification.new_calls': finalCalls.length
+        });
+      } catch (err: any) {
+        // Timeout or error - proceed with best guess
+        addSpanEvent('clarification.failed', {
+          'clarification.error': err.message || 'Unknown error'
+        });
+        notify('session/update', {
+          sessionId,
+          sessionUpdate: 'agent_message_chunk',
+          content: { 
+            type: 'text', 
+            text: 'Clarification timeout - proceeding with best guess' 
+          },
+        });
+      }
+    });
+  }
+  
+  // Phase 7f: Handle confirmation if needed
+  if (confirmMode && !autoConfirm && finalCalls.length > 0) {
+    let shouldReturn = false;
+    await withSpan('confirmation.request', async (confirmSpan) => {
+      // Only auto-confirm if autoConfirm flag is set AND confidence is high
+      // If user explicitly uses --confirm, always ask for confirmation
+      const shouldAutoConfirm = autoConfirm && confidence && confidence >= 0.8;
+      confirmSpan.setAttributes({
+        'confirmation.mode': true,
+        'confirmation.confidence': confidence || 0,
+        'confirmation.auto': shouldAutoConfirm
+      });
+      
+      if (shouldAutoConfirm) {
+        // High confidence with --auto-confirm flag - auto-confirm
+        notify('session/update', {
+          sessionId,
+          sessionUpdate: 'agent_message_chunk',
+          content: { 
+            type: 'text', 
+            text: `✅ High confidence (${confidence.toFixed(1)}) with auto-confirm - applying changes automatically` 
+          },
+        });
+      } else {
+        // Show plan preview and store it for later confirmation
+        const planPreview = formatPlanPreview(finalCalls);
+        
+        // Log what we're about to send for debugging
+        logger.line('info', {
+          event: 'confirmation_preview',
+          preview_length: planPreview.length,
+          calls_count: finalCalls.length,
+          session_id: sessionId
+        });
+        
+        // Store the pending plan in a global variable so we can apply it on next prompt
+        const pendingPlanKey = `pending_plan_${sessionId}`;
+        (global as any)[pendingPlanKey] = {
+          calls: finalCalls,
+          timestamp: Date.now()
+        };
+        
+        // Send the plan preview to the user
+        const confirmationMessage = planPreview + '\n\nType ":yes" to apply or ":no" to cancel';
+        notify('session/update', {
+          sessionId,
+          sessionUpdate: 'agent_message_chunk',
+          content: { 
+            type: 'text', 
+            text: confirmationMessage
+          },
+        });
+        
+        confirmSpan.setAttributes({
+          'confirmation.pending': true,
+          'confirmation.plan_stored': true
+        });
+        
+        // Don't apply the changes yet - wait for user response
+        shouldReturn = true;
+      }
+    });
+    
+    // Return early if we're waiting for confirmation
+    if (shouldReturn) {
+      return;
+    }
+  }
 
   // Log apply result
   const stackBefore = stackManager.getStack();
   const stackHashBefore = JSON.stringify(stackBefore).length; // Simple hash
 
-  logger.line('info', { planner_output: { calls, notes } });
+  logger.line('info', { planner_output: { calls: finalCalls, notes } });
 
   // Track what was clamped and dropped
   const clampedValues: string[] = [];
@@ -1064,7 +1537,7 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     });
 
     // Process each planned call
-    for (const call of calls) {
+    for (const call of finalCalls) {
       if (cancelled) break;
 
       switch (call.fn) {

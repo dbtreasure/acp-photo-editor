@@ -146,6 +146,10 @@ async function main() {
       console.log(`iTerm2 inline images: enabled${ttyImages === 'auto' ? ' (auto-detected)' : ''}`);
     }
 
+    // Store readline interface reference for pausing/resuming
+    let rlInterface: readline.Interface | null = null;
+    let hasReceivedAgentMessage = false;
+    
     // Set up session update handler
     peer.on('session/update', (params: any) => {
       // Handle tool_call_update
@@ -246,7 +250,12 @@ async function main() {
       // Handle regular message chunks
       else if (params.sessionUpdate === 'agent_message_chunk') {
         const content = params?.content?.text ?? '';
-        console.log(`[agent] ${content}`);
+        hasReceivedAgentMessage = true;
+        // Split multi-line content and prefix each line
+        const lines = content.split('\n');
+        lines.forEach((line: string) => {
+          console.log(`[agent] ${line}`);
+        });
       }
     });
 
@@ -312,6 +321,9 @@ async function main() {
         output: process.stdout,
         prompt: '> ',
       });
+      
+      // Store reference for use in session/update handler
+      rlInterface = rl;
 
       let isPrompting = false;
 
@@ -430,6 +442,8 @@ async function main() {
               console.log('Usage: :ask [--with-image] <text>. Example: :ask --with-image "fix white balance"');
             } else {
               isPrompting = true;
+              // Pause readline to prevent interference
+              rl.pause();
               console.log(`Processing: ${askText}${withImage ? ' (with image)' : ''}`);
               try {
                 // Include the --with-image flag in the command if present
@@ -438,9 +452,14 @@ async function main() {
                   sessionId,
                   prompt: [{ type: 'text', text: commandText }],
                 });
+                // Give time for all output to be displayed
+                await new Promise(resolve => setTimeout(resolve, 100));
                 console.log(`[result] stopReason: ${pRes.stopReason}`);
+                // Resume readline
+                rl.resume();
               } catch (e: any) {
                 console.error('[error]', e?.message || String(e));
+                rl.resume();
               }
               isPrompting = false;
             }
@@ -575,6 +594,24 @@ async function main() {
             console.log('Sending cancel...');
             peer.notify('session/cancel', { sessionId });
           }
+        } else if (cmd === ':yes' || cmd === ':no') {
+          // Phase 7f: Handle confirmation responses
+          if (isPrompting) {
+            console.log('A prompt is already in progress. Use :cancel to cancel it.');
+          } else {
+            isPrompting = true;
+            console.log(`Sending: ${cmd}`);
+            try {
+              const pRes = await peer.request('session/prompt', {
+                sessionId,
+                prompt: [{ type: 'text', text: cmd }],
+              });
+              console.log(`[result] stopReason: ${pRes.stopReason}`);
+            } catch (e: any) {
+              console.error('[error]', e?.message || String(e));
+            }
+            isPrompting = false;
+          }
         } else if (cmd.startsWith(':')) {
           console.log(`Unknown command: ${cmd}`);
         } else if (cmd.length > 0) {
@@ -597,7 +634,14 @@ async function main() {
           }
         }
 
-        rl.prompt();
+        // Only re-prompt if we haven't received agent messages
+        // If we did receive messages, delay the prompt to ensure they're visible
+        if (hasReceivedAgentMessage) {
+          hasReceivedAgentMessage = false;
+          setTimeout(() => rl.prompt(), 100);
+        } else {
+          rl.prompt();
+        }
       });
 
       rl.on('close', () => {
