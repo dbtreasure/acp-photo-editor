@@ -1,4 +1,4 @@
-# ACP Photo Editor — Phase 7d
+# ACP Photo Editor — Phase 7e
 
 An implementation of the Agent Client Protocol (ACP) with Model Context Protocol (MCP) integration for real image processing, now featuring **full vision-enabled AI editing** that can analyze images to make intelligent corrections across the entire tool catalog using Google's Gemini 2.5 Flash model.
 
@@ -25,17 +25,27 @@ npm run interactive
 npm run demo
 ```
 
-## What's New in Phase 7d
+## What's New in Phase 7e
 
-Phase 7d extends vision capabilities to the **full tool catalog** for comprehensive AI-powered editing:
+Phase 7e introduces **Reference-Look Match** capability for global-only adjustments:
 
-- **Full Tool Catalog**: All operations now available in vision mode (WB, exposure, contrast, saturation, vibrance, rotate, crop, export)
+- **Reference Image Matching**: Load a reference image and automatically compute adjustments to match its look
+- **Local Delta Computation**: Fast, deterministic computation of adjustments based on LAB color space statistics
+- **Smart Delta Mapping**: Automatic white balance, exposure, contrast, and color adjustments
+- **Epsilon Suppression**: Avoids micro-adjustments below perceptual thresholds
+- **70/30 Vibrance Split**: Protects skin tones while enhancing colors
+- **Reference Management**: Cache reference stats for faster repeated operations
+- **Complete Observability**: New telemetry spans for reference flow
+
+### Previous Phase 7d Features
+
+Phase 7d extended vision capabilities to the **full tool catalog** for comprehensive AI-powered editing:
+
+- **Full Tool Catalog**: All operations available in vision mode (WB, exposure, contrast, saturation, vibrance, rotate, crop, export)
 - **Intelligent Analysis**: AI analyzes images to suggest exposure, contrast, composition improvements
 - **Smart Cropping**: Visual composition analysis for better crop suggestions
 - **Horizon Detection**: Automatic rotation suggestions for tilted horizons
 - **Single-Turn Export**: Complete edit-to-export workflows in one command
-- **Enhanced Mapping**: Coordinate mapping for both gray points and crop rectangles
-- **Complete OTEL/Jaeger**: End-to-end tracing across all operations
 
 ### Previous Phase 7b Features
 
@@ -63,6 +73,42 @@ Phase 7d extends vision capabilities to the **full tool catalog** for comprehens
 ```
 
 ### Example Commands
+
+#### Reference Matching (Phase 7e - NEW!)
+
+Load a reference image and automatically match its look:
+
+```bash
+# Load a reference image
+:ref open ./reference.jpg
+
+# Match the reference look (uses cached reference)
+:ask "match the reference look"
+
+# Or provide reference inline
+:ask --ref ./golden-hour.jpg "match the reference look"
+
+# See computed deltas before applying
+:ask --ref ./reference.jpg --show-deltas "match colors"
+
+# Dry run to preview deltas without applying
+:ask --ref ./reference.jpg --dry-run "match the reference"
+
+# Combine with custom text
+:ask --ref ./reference.jpg "match the reference but keep it slightly warmer"
+
+# Clear the cached reference
+:ref clear
+```
+
+The reference matching system:
+- Computes LAB color space statistics for accurate color matching
+- Calculates white balance deltas from a*/b* channel differences
+- Maps luminance differences to exposure adjustments
+- Derives contrast from luminance range differences
+- Splits color adjustments 70/30 between vibrance and saturation
+- Suppresses micro-adjustments below perceptual thresholds
+- Caches reference stats for instant repeated operations
 
 #### Vision Mode (Phase 7d - Full Catalog)
 
@@ -148,6 +194,13 @@ node scripts/debug-trace.js <trace-id>
 ```
 
 ### What's Traced
+
+Phase 7e adds new telemetry spans:
+- `ref.load_stats` - Reference image loading and stats computation
+- `ref.compute_stats` - Reference stats calculation with caching
+- `target.compute_stats` - Target image stats computation
+- `look.delta_compute` - Local delta calculation with all computed values
+- Enhanced `planner.execute` with reference presence indicators
 - **Image Operations**: Load, preview generation, base64 encoding
 - **Planner Execution**: API calls, response parsing, validation
 - **Edit Operations**: White balance, coordinate mapping, stack updates

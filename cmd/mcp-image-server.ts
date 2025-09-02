@@ -138,6 +138,11 @@ const ComputeHistogramArgsSchema = z.object({
   bins: z.number().int().positive().optional().default(64),
 });
 
+const ImageStatsArgsSchema = z.object({
+  uri: z.url(),
+  maxPx: z.number().int().positive().optional().default(1024),
+});
+
 const SUPPORTED_MIMES = new Set([
   'image/jpeg',
   'image/png',
@@ -214,6 +219,190 @@ async function getMimeType(filePath: string): Promise<string> {
   };
 
   return mimeMap[ext] || 'application/octet-stream';
+}
+
+// Helper functions for image statistics
+
+function rgbToLab(r: number, g: number, b: number): { L: number; a: number; b: number } {
+  // Normalize RGB to [0, 1]
+  r = r / 255;
+  g = g / 255;
+  b = b / 255;
+
+  // Convert to linear RGB (remove gamma)
+  r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+  g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+  b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+
+  // Convert to XYZ (D65 illuminant)
+  let x = r * 0.4124564 + g * 0.3575761 + b * 0.2419026;
+  let y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
+  let z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041;
+
+  // Normalize for D65 illuminant
+  x = x / 0.95047;
+  y = y / 1.00000;
+  z = z / 1.08883;
+
+  // Convert to LAB
+  const fx = x > 0.008856 ? Math.pow(x, 1/3) : (7.787 * x + 16/116);
+  const fy = y > 0.008856 ? Math.pow(y, 1/3) : (7.787 * y + 16/116);
+  const fz = z > 0.008856 ? Math.pow(z, 1/3) : (7.787 * z + 16/116);
+
+  const L = 116 * fy - 16;
+  const a = 500 * (fx - fy);
+  const bStar = 200 * (fy - fz);
+
+  return { L, a, b: bStar };
+}
+
+function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  r = r / 255;
+  g = g / 255;
+  b = b / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+
+  let h = 0;
+  if (delta !== 0) {
+    if (max === r) {
+      h = ((g - b) / delta) % 6;
+    } else if (max === g) {
+      h = (b - r) / delta + 2;
+    } else {
+      h = (r - g) / delta + 4;
+    }
+    h = h * 60;
+    if (h < 0) h += 360;
+  }
+
+  const s = max === 0 ? 0 : delta / max;
+  const v = max;
+
+  return { h, s: s * 100, v: v * 100 };
+}
+
+function computeLABStats(data: Buffer, width: number, height: number) {
+  const labValues: { L: number[]; a: number[]; b: number[] } = {
+    L: [],
+    a: [],
+    b: [],
+  };
+
+  // Sample every pixel (or subsample for performance)
+  const channels = data.length / (width * height);
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const lab = rgbToLab(r, g, b);
+    labValues.L.push(lab.L);
+    labValues.a.push(lab.a);
+    labValues.b.push(lab.b);
+  }
+
+  // Sort L values for percentiles
+  labValues.L.sort((a, b) => a - b);
+  
+  // Calculate percentiles
+  const p5 = labValues.L[Math.floor(labValues.L.length * 0.05)];
+  const p50 = labValues.L[Math.floor(labValues.L.length * 0.50)];
+  const p95 = labValues.L[Math.floor(labValues.L.length * 0.95)];
+
+  // Calculate mean and stdev for L
+  const lMean = labValues.L.reduce((sum, val) => sum + val, 0) / labValues.L.length;
+  const lVariance = labValues.L.reduce((sum, val) => sum + Math.pow(val - lMean, 2), 0) / labValues.L.length;
+  const lStdev = Math.sqrt(lVariance);
+
+  // Calculate mean a and b
+  const aMean = labValues.a.reduce((sum, val) => sum + val, 0) / labValues.a.length;
+  const bMean = labValues.b.reduce((sum, val) => sum + val, 0) / labValues.b.length;
+  
+  // Calculate mean chroma
+  const chromaValues = labValues.a.map((a, idx) => 
+    Math.sqrt(a * a + labValues.b[idx] * labValues.b[idx])
+  );
+  const chromaMean = chromaValues.reduce((sum, val) => sum + val, 0) / chromaValues.length;
+
+  return {
+    L: { p5, p50, p95, mean: lMean, stdev: lStdev },
+    AB: { a_mean: aMean, b_mean: bMean, chroma_mean: chromaMean },
+  };
+}
+
+function computeSaturationStats(data: Buffer, width: number, height: number) {
+  const hsvSaturations: number[] = [];
+  const channels = data.length / (width * height);
+
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const hsv = rgbToHsv(r, g, b);
+    hsvSaturations.push(hsv.s);
+  }
+
+  // Sort for percentiles
+  hsvSaturations.sort((a, b) => a - b);
+  
+  const hsvMean = hsvSaturations.reduce((sum, val) => sum + val, 0) / hsvSaturations.length;
+  const hsvP95 = hsvSaturations[Math.floor(hsvSaturations.length * 0.95)];
+
+  // Compute colorfulness metric (simplified Hasler & Süsstrunk)
+  let rg_sum = 0, yb_sum = 0;
+  let rg_sq_sum = 0, yb_sq_sum = 0;
+  let pixelCount = 0;
+
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    
+    const rg = r - g;
+    const yb = 0.5 * (r + g) - b;
+    
+    rg_sum += rg;
+    yb_sum += yb;
+    rg_sq_sum += rg * rg;
+    yb_sq_sum += yb * yb;
+    pixelCount++;
+  }
+
+  const rg_mean = rg_sum / pixelCount;
+  const yb_mean = yb_sum / pixelCount;
+  const rg_stdev = Math.sqrt(rg_sq_sum / pixelCount - rg_mean * rg_mean);
+  const yb_stdev = Math.sqrt(yb_sq_sum / pixelCount - yb_mean * yb_mean);
+  
+  const colorfulness = Math.sqrt(rg_stdev * rg_stdev + yb_stdev * yb_stdev) + 
+                       0.3 * Math.sqrt(rg_mean * rg_mean + yb_mean * yb_mean);
+
+  return {
+    hsv_mean: hsvMean,
+    hsv_p95: hsvP95,
+    colorfulness,
+  };
+}
+
+function computeLumaHistogram(data: Buffer, width: number, height: number, bins: number): number[] {
+  const histogram = new Array(bins).fill(0);
+  const channels = data.length / (width * height);
+  
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    
+    // Calculate luma (ITU-R BT.709)
+    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const bin = Math.min(Math.floor(luma * bins / 256), bins - 1);
+    histogram[bin]++;
+  }
+  
+  // Normalize histogram
+  const total = width * height;
+  return histogram.map(count => count / total);
 }
 
 const server = new Server(
@@ -466,6 +655,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ['uri', 'editStack'],
+        },
+      },
+      {
+        name: 'image_stats',
+        description: 'Compute comprehensive image statistics for reference matching',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            uri: {
+              type: 'string',
+              description: 'file:// URI to the image',
+            },
+            maxPx: {
+              type: 'number',
+              description: 'Maximum dimension for downscaling before analysis',
+              default: 1024,
+            },
+          },
+          required: ['uri'],
         },
       },
     ],
@@ -999,6 +1207,95 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     } catch (error: any) {
       throw new McpError(ErrorCode.InternalError, `Failed to compute histogram: ${error.message}`);
+    }
+  }
+
+  if (name === 'image_stats') {
+    const { uri, maxPx } = ImageStatsArgsSchema.parse(args);
+
+    if (!uri.startsWith('file://')) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Only file:// URIs are supported');
+    }
+
+    const filePath = fileURLToPath(uri);
+    validatePath(filePath);
+
+    const stats = await fs.stat(filePath);
+    if (stats.size > MAX_FILE_SIZE) {
+      throw new McpError(ErrorCode.InvalidRequest, `File too large: ${stats.size} bytes (max ${MAX_FILE_SIZE})`);
+    }
+
+    const mimeType = await getMimeType(filePath);
+    if (!SUPPORTED_MIMES.has(mimeType)) {
+      throw new McpError(ErrorCode.InvalidRequest, `Unsupported mime type: ${mimeType}`);
+    }
+
+    try {
+      // Load and downscale image
+      const pipeline = sharp(filePath)
+        .rotate() // Auto-rotate based on EXIF
+        .resize(maxPx, maxPx, {
+          fit: 'inside',
+          withoutEnlargement: true,
+        });
+
+      // Get metadata
+      const metadata = await pipeline.metadata();
+      const originalWidth = metadata.width || 1;
+      const originalHeight = metadata.height || 1;
+
+      // Convert to raw RGB for processing
+      const { data, info } = await pipeline
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      // Compute LAB statistics
+      const labStats = computeLABStats(data, info.width, info.height);
+      
+      // Compute saturation statistics
+      const satStats = computeSaturationStats(data, info.width, info.height);
+      
+      // Compute contrast index
+      const contrastIndex = labStats.L.p95 - labStats.L.p5;
+      
+      // Optional: compute luma histogram (32 bins)
+      const lumaHist = computeLumaHistogram(data, info.width, info.height, 32);
+
+      const imageStats = {
+        w: originalWidth,
+        h: originalHeight,
+        mime: mimeType,
+        L: {
+          p5: labStats.L.p5,
+          p50: labStats.L.p50,
+          p95: labStats.L.p95,
+          mean: labStats.L.mean,
+          stdev: labStats.L.stdev,
+        },
+        AB: {
+          a_mean: labStats.AB.a_mean,
+          b_mean: labStats.AB.b_mean,
+          chroma_mean: labStats.AB.chroma_mean,
+        },
+        sat: {
+          hsv_mean: satStats.hsv_mean,
+          hsv_p95: satStats.hsv_p95,
+          colorfulness: satStats.colorfulness,
+        },
+        contrast_index: contrastIndex,
+        luma_hist: lumaHist,
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(imageStats),
+          },
+        ],
+      };
+    } catch (error: any) {
+      throw new McpError(ErrorCode.InternalError, `Failed to compute image stats: ${error.message}`);
     }
   }
 

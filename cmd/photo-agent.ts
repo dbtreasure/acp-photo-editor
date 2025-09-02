@@ -16,8 +16,10 @@ import { EditStackManager, EditStack } from '../src/editStack';
 import { MockPlanner } from '../src/planner/mock';
 import { GeminiPlanner, PlannerState as GeminiPlannerState } from '../src/planner/gemini';
 import { Planner, PlannedCall, PLANNER_CLAMPS } from '../src/planner/types';
+import { computeDeltas, areAllDeltasBelowEpsilon, formatDeltasForDisplay, ImageStats } from '../src/deltaMapper';
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 import { pathToFileURL } from 'url';
 import { 
   initTelemetry, 
@@ -51,6 +53,17 @@ let turnCounter = 0;
 
 // Cache image metadata to avoid repeated tool calls
 const imageMetadataCache = new Map<string, { width: number; height: number; mimeType?: string }>();
+
+// Phase 7e: Reference image management
+interface ReferenceImage {
+  path: string;
+  stats: any; // ImageStats from MCP tool
+  fileHash?: string;
+  size?: number;
+  mtime?: number;
+}
+let referenceImage: ReferenceImage | null = null;
+const referenceStatsCache = new Map<string, any>(); // Cache by hash
 
 // Planner configuration (from session/new)
 let plannerMode: 'mock' | 'gemini' | 'off' = 'mock';
@@ -203,6 +216,29 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
         },
         (err) => {
           logger.line('error', { export_command_failed: err.message });
+          notify('session/update', {
+            sessionId: currentSessionId,
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: `Error: ${err.message}` },
+          });
+          send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+        }
+      );
+      return;
+    }
+
+    // Check for :ref command (Phase 7e)
+    if (text.startsWith(':ref')) {
+      handleRefCommand(text, currentSessionId, params.cwd || process.cwd()).then(
+        () => {
+          if (!cancelled) {
+            send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+          } else {
+            send({ jsonrpc: '2.0', id, result: { stopReason: 'cancelled' } });
+          }
+        },
+        (err) => {
+          logger.line('error', { ref_command_failed: err.message });
           notify('session/update', {
             sessionId: currentSessionId,
             sessionUpdate: 'agent_message_chunk',
@@ -672,13 +708,38 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     throw new Error('No MCP image server available');
   }
 
-  // Parse command for --with-image flag (Phase 7c)
+  // Parse command for flags (Phase 7c/7e)
   let withImage = false;
+  let withRef: string | null = null;
+  let showDeltas = false;
+  let dryRun = false;
   let askText = command.substring(5).trim(); // Remove ":ask "
 
-  if (askText.startsWith('--with-image ')) {
-    withImage = true;
-    askText = askText.substring(13).trim(); // Remove flag
+  // Parse flags
+  const flagPattern = /^(--[\w-]+)(?:\s+([^\s]+))?\s*/;
+  while (flagPattern.test(askText)) {
+    const match = askText.match(flagPattern)!;
+    const flag = match[1];
+    const value = match[2];
+    
+    if (flag === '--with-image') {
+      withImage = true;
+      askText = askText.substring(match[0].length).trim();
+    } else if (flag === '--ref') {
+      if (!value) {
+        throw new Error('--ref flag requires a path');
+      }
+      withRef = value;
+      askText = askText.substring(match[0].length).trim();
+    } else if (flag === '--show-deltas') {
+      showDeltas = true;
+      askText = askText.substring(match[0].length).trim();
+    } else if (flag === '--dry-run') {
+      dryRun = true;
+      askText = askText.substring(match[0].length).trim();
+    } else {
+      break; // Unknown flag, treat as part of text
+    }
   }
 
   if (!askText) {
@@ -710,6 +771,140 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       angle: [PLANNER_CLAMPS.angleDeg.min, PLANNER_CLAMPS.angleDeg.max],
     },
   };
+
+  // Phase 7e: Handle reference image
+  if (withRef) {
+    // Load reference if provided via --ref flag
+    const resolvedPath = path.isAbsolute(withRef) ? withRef : path.join(cwd, withRef);
+    const fileUri = pathToFileURL(resolvedPath).toString();
+    
+    // Check if file exists
+    try {
+      await fs.stat(resolvedPath);
+    } catch (err) {
+      throw new Error(`Reference file not found: ${withRef}`);
+    }
+    
+    // Compute reference stats
+    const refStats = await withSpan('ref.compute_stats', async (refSpan) => {
+      refSpan.setAttributes({
+        'ref.path': path.basename(resolvedPath)
+      });
+      
+      const result = await client.callTool({
+        name: 'image_stats',
+        arguments: {
+          uri: fileUri,
+          maxPx: 1024,
+        },
+      });
+      
+      const content = result.content as any;
+      if (content?.[0]?.type === 'text') {
+        return JSON.parse(content[0].text);
+      }
+      throw new Error('Failed to compute reference image statistics');
+    });
+    
+    // Update global reference
+    referenceImage = {
+      path: resolvedPath,
+      stats: refStats,
+    };
+  }
+  
+  // If we have a reference image, compute stats and deltas
+  if (referenceImage) {
+    // Compute current image stats
+    const targetStats = await withSpan('target.compute_stats', async (targetSpan) => {
+      targetSpan.setAttributes({
+        'target.uri': lastLoadedImage || ''
+      });
+      
+      // First apply current edit stack to get the actual preview state
+      const previewResult = await client.callTool({
+        name: 'render_preview',
+        arguments: {
+          uri: lastLoadedImage,
+          editStack: stackManager.getStack(),
+          maxPx: 1024,
+          format: 'jpeg',
+          quality: 60,
+        },
+      });
+      
+      // Then compute stats on the preview (we need to save it temporarily)
+      // For now, compute stats on the base image (simplified)
+      // TODO: Ideally we'd compute stats on the preview with edits applied
+      const result = await client.callTool({
+        name: 'image_stats',
+        arguments: {
+          uri: lastLoadedImage,
+          maxPx: 1024,
+        },
+      });
+      
+      const content = result.content as any;
+      if (content?.[0]?.type === 'text') {
+        return JSON.parse(content[0].text);
+      }
+      throw new Error('Failed to compute target image statistics');
+    });
+    
+    // Compute deltas locally
+    const suggestedDeltas = await withSpan('look.delta_compute', async (deltaSpan) => {
+      const deltas = computeDeltas(targetStats as ImageStats, referenceImage!.stats as ImageStats);
+      
+      deltaSpan.setAttributes({
+        'delta.a': referenceImage!.stats.AB.a_mean - targetStats.AB.a_mean,
+        'delta.b': referenceImage!.stats.AB.b_mean - targetStats.AB.b_mean,
+        'delta.L': referenceImage!.stats.L.p50 - targetStats.L.p50,
+        'delta.contrast': referenceImage!.stats.contrast_index - targetStats.contrast_index,
+        'delta.colorfulness': referenceImage!.stats.sat.colorfulness - targetStats.sat.colorfulness,
+        'suggested.temp': deltas.temp || 0,
+        'suggested.tint': deltas.tint || 0,
+        'suggested.ev': deltas.ev || 0,
+        'suggested.contrast': deltas.contrast || 0,
+        'suggested.vibrance': deltas.vibrance || 0,
+        'suggested.saturation': deltas.saturation || 0,
+      });
+      
+      return deltas;
+    });
+    
+    // Add to planner state
+    plannerState.refStats = referenceImage.stats;
+    plannerState.suggestedDeltas = suggestedDeltas;
+    
+    // Show deltas if requested
+    if (showDeltas) {
+      const deltaDisplay = formatDeltasForDisplay(suggestedDeltas);
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: deltaDisplay },
+      });
+      
+      if (dryRun) {
+        // Exit early if dry run
+        return;
+      }
+    }
+    
+    // Check if all deltas are below epsilon
+    if (areAllDeltasBelowEpsilon(suggestedDeltas)) {
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Image already matches reference (all deltas below threshold).' },
+      });
+      
+      if (!askText || askText.toLowerCase() === 'match the reference look') {
+        // No additional text, just matching reference, and already matches
+        return;
+      }
+    }
+  }
 
   // Capture preview image if --with-image flag is present (Phase 7c)
   let imageB64: string | undefined;
@@ -771,7 +966,9 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
     plannerSpan.setAttributes({
       'planner.type': plannerMode,
       'planner.has_image': !!imageB64,
-      'planner.text': askText
+      'planner.text': askText,
+      'planner.ref.present': !!referenceImage,
+      'planner.ref.basename': referenceImage ? path.basename(referenceImage.path) : undefined,
     });
     
     const startTime = Date.now();
@@ -1518,6 +1715,131 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
       }
     });
   }
+}
+
+async function handleRefCommand(command: string, sessionId: string, cwd: string): Promise<void> {
+  await withSpan('ref_command', async (span) => {
+    span.setAttributes({
+      'command': command,
+      'session_id': sessionId
+    });
+
+    const parts = command.split(' ').filter(p => p);
+    const subCommand = parts[1]; // 'open' or 'clear'
+    
+    if (subCommand === 'clear') {
+      // Clear reference image
+      referenceImage = null;
+      addSpanEvent('ref.cleared');
+      
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Reference image cleared.' },
+      });
+      return;
+    }
+    
+    if (subCommand === 'open') {
+      const refPath = parts.slice(2).join(' ');
+      if (!refPath) {
+        throw new Error('Usage: :ref open <path>');
+      }
+      
+      // Resolve path relative to CWD
+      const resolvedPath = path.isAbsolute(refPath) ? refPath : path.join(cwd, refPath);
+      const fileUri = pathToFileURL(resolvedPath).toString();
+      
+      // Check if file exists
+      try {
+        await fs.stat(resolvedPath);
+      } catch (err) {
+        throw new Error(`Reference file not found: ${refPath}`);
+      }
+      
+      // Get MCP client
+      const client = mcpClients.get('image');
+      if (!client) {
+        throw new Error('No MCP image server available');
+      }
+      
+      // Compute file hash for caching
+      const fileStats = await fs.stat(resolvedPath);
+      const fileBuffer = await fs.readFile(resolvedPath);
+      const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 16);
+      const cacheKey = `${fileHash}_${fileStats.size}_${fileStats.mtime.getTime()}`;
+      
+      // Check cache first
+      let stats = referenceStatsCache.get(cacheKey);
+      
+      if (!stats) {
+        // Compute stats using MCP tool
+        stats = await withSpan('ref.load_stats', async (loadSpan) => {
+          loadSpan.setAttributes({
+            'ref.path': path.basename(resolvedPath),
+            'ref.size': fileStats.size,
+            'ref.hash': fileHash
+          });
+          
+          const result = await client.callTool({
+            name: 'image_stats',
+            arguments: {
+              uri: fileUri,
+              maxPx: 1024,
+            },
+          });
+          
+          const content = result.content as any;
+          if (content?.[0]?.type === 'text') {
+            const parsedStats = JSON.parse(content[0].text);
+            loadSpan.setAttributes({
+              'ref.width': parsedStats.w,
+              'ref.height': parsedStats.h,
+              'ref.mime': parsedStats.mime
+            });
+            return parsedStats;
+          }
+          throw new Error('Failed to compute reference image statistics');
+        });
+        
+        // Cache the stats
+        referenceStatsCache.set(cacheKey, stats);
+      }
+      
+      // Store reference image
+      referenceImage = {
+        path: resolvedPath,
+        stats,
+        fileHash,
+        size: fileStats.size,
+        mtime: fileStats.mtime.getTime(),
+      };
+      
+      addSpanEvent('ref.loaded', {
+        'ref.basename': path.basename(resolvedPath),
+        'ref.cached': referenceStatsCache.has(cacheKey)
+      });
+      
+      // Send confirmation
+      notify('session/update', {
+        sessionId,
+        sessionUpdate: 'agent_message_chunk',
+        content: { 
+          type: 'text', 
+          text: `Reference image loaded: ${path.basename(resolvedPath)} (${stats.w}×${stats.h})` 
+        },
+      });
+      
+      logger.line('info', { 
+        ref_loaded: true, 
+        path: path.basename(resolvedPath),
+        dimensions: `${stats.w}×${stats.h}`,
+        cached: referenceStatsCache.has(cacheKey)
+      });
+    } else {
+      throw new Error('Usage: :ref open <path> | :ref clear');
+    }
+  });
 }
 
 async function handleEditCommand(command: string, sessionId: string): Promise<void> {

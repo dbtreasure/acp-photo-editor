@@ -33,6 +33,26 @@ export interface PlannerState {
     contrast: [number, number];
     angle: [number, number];
   };
+  // Phase 7e: Reference image support
+  refStats?: {
+    w: number;
+    h: number;
+    mime: string;
+    L: { p5: number; p50: number; p95: number; mean: number; stdev: number };
+    AB: { a_mean: number; b_mean: number; chroma_mean: number };
+    sat: { hsv_mean: number; hsv_p95: number; colorfulness: number };
+    contrast_index: number;
+  };
+  suggestedDeltas?: {
+    temp?: number;
+    tint?: number;
+    ev?: number;
+    contrast?: number;
+    saturation?: number;
+    vibrance?: number;
+    rotate?: number;
+    aspect?: string;
+  };
 }
 
 export class GeminiPlanner implements Planner {
@@ -557,7 +577,7 @@ ${this.buildStateContext(state)}
       return redactedText;
     }
 
-    return JSON.stringify({
+    const stateObj: any = {
       user: redactedText,
       state: {
         image: state.image,
@@ -569,7 +589,30 @@ ${this.buildStateContext(state)}
           angle: state.limits.angle,
         },
       },
-    });
+    };
+
+    // Phase 7e: Include reference stats and suggested deltas if present
+    if (state.refStats) {
+      stateObj.referenceImage = {
+        dimensions: `${state.refStats.w}x${state.refStats.h}`,
+        luminance: {
+          median: state.refStats.L.p50,
+          contrast: state.refStats.contrast_index,
+        },
+        color: {
+          a_mean: state.refStats.AB.a_mean,
+          b_mean: state.refStats.AB.b_mean,
+          colorfulness: state.refStats.sat.colorfulness,
+        },
+      };
+    }
+
+    if (state.suggestedDeltas) {
+      stateObj.suggestedAdjustments = state.suggestedDeltas;
+      stateObj.note = "These adjustments are computed locally to match the reference image. Prioritize these values unless the user text explicitly overrides them.";
+    }
+
+    return JSON.stringify(stateObj);
   }
 
   private buildStateContext(state: PlannerState): string {
