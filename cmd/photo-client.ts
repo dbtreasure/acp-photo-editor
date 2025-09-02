@@ -262,7 +262,6 @@ async function main() {
                   width: '32',
                   height: 'auto',
                   preserveAspectRatio: true,
-                  inline: false,
                 });
                 console.log(`  - ${name}`);
               } catch (err: any) {
@@ -302,6 +301,7 @@ async function main() {
             const fullPath = path.resolve(cwd, cleanPath);
             const mimeType = guessMimeType(fullPath);
             return {
+              type: 'resource_link',
               name: path.basename(fullPath),
               uri: pathToFileURL(fullPath).href,
               mimeType,
@@ -317,7 +317,7 @@ async function main() {
               const prompt: PromptContent[] = [
                 { type: 'text', text: `:open ${resources.map((r) => r.name).join(' ')}` },
               ];
-              resources.forEach((r) => prompt.push({ type: 'resource', resource: r }));
+              resources.forEach((r) => prompt.push(r));
 
               const pRes = await peer.request('session/prompt', {
                 sessionId,
