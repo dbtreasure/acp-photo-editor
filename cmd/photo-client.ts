@@ -11,7 +11,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import readline from 'readline';
 import { pathToFileURL } from 'url';
-import { JsonRpcPeer } from '../src/common/jsonrpc';
+import { RpcClient } from '../src/common/rpcClient';
 import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
 import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src/acp/types';
@@ -65,7 +65,7 @@ async function main() {
 
   // Spawn agent
   const child = spawn(agentCmd, agentArgs, { stdio: ['pipe', 'pipe', 'inherit'] });
-  const peer = new JsonRpcPeer(child.stdout, child.stdin, logger);
+  const peer = new RpcClient(child.stdout, child.stdin, logger);
 
   // Configure MCP servers if enabled
   const mcpServers: MCPServerConfig[] = args.mcp
@@ -100,7 +100,7 @@ async function main() {
       const sessionId = newRes.sessionId;
       console.log('DEMO:SESSION', sessionId);
 
-      peer.on('session/update', (params: any) => {
+      peer.onSessionUpdate((params: any) => {
         const content = params?.content?.text ?? '';
         console.log('DEMO:CHUNK', content);
       });
@@ -151,7 +151,7 @@ async function main() {
     let hasReceivedAgentMessage = false;
     
     // Set up session update handler
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       // Handle tool_call_update
       if (params.sessionUpdate === 'tool_call_update') {
         const { toolCallId, status, content } = params;
@@ -473,7 +473,7 @@ async function main() {
             console.log('Preparing export...');
 
             // Set up permission handler before sending the prompt
-            peer.on('session/request_permission', (msg: any) => {
+            peer.onPermissionRequest((msg: any) => {
               // Handle both notification style (params) and request style (full object)
               const params = msg.params || msg;
               const requestId = msg.id;

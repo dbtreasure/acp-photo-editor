@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, ChildProcess } from 'child_process';
-import { JsonRpcPeer } from '../../src/common/jsonrpc';
+import { RpcClient } from '../../src/common/rpcClient';
 import { Readable, Writable } from 'stream';
 import path from 'path';
 import fs from 'fs/promises';
@@ -10,7 +10,7 @@ const SKIP_GEMINI_TESTS = !process.env.GEMINI_API_KEY;
 
 describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () => {
   let agent: ChildProcess;
-  let peer: JsonRpcPeer;
+  let peer: RpcClient;
   let sessionId: string;
   const testImagePath = path.join(process.cwd(), 'test', 'fixtures', 'test.jpg');
 
@@ -29,7 +29,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
       stdio: ['pipe', 'pipe', 'inherit'],
     });
 
-    peer = new JsonRpcPeer(
+    peer = new RpcClient(
       agent.stdout as unknown as Readable,
       agent.stdin as unknown as Writable,
       { line: () => {} } as any
@@ -74,7 +74,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
   it('should handle natural language editing with Gemini', async () => {
     const updates: any[] = [];
 
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       updates.push(params);
     });
 
@@ -126,7 +126,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
   it('should clamp extreme values', async () => {
     const updates: any[] = [];
 
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
       }
@@ -157,7 +157,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
   it('should handle export command', async () => {
     const updates: any[] = [];
 
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
       }
@@ -188,7 +188,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
   it('should provide helpful notes about unsupported operations', async () => {
     const updates: any[] = [];
 
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
       }
@@ -220,7 +220,7 @@ describe.skipIf(SKIP_GEMINI_TESTS)('Phase 7b: Gemini Planner Integration', () =>
 
 describe('Phase 7b: Gemini Fallback Behavior', () => {
   let agent: ChildProcess;
-  let peer: JsonRpcPeer;
+  let peer: RpcClient;
   let sessionId: string;
   const testImagePath = path.join(process.cwd(), 'test', 'fixtures', 'test.jpg');
 
@@ -242,7 +242,7 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
       env,
     });
 
-    peer = new JsonRpcPeer(
+    peer = new RpcClient(
       agent.stdout as unknown as Readable,
       agent.stdin as unknown as Writable,
       { line: () => {} } as any
@@ -290,7 +290,7 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
   it('should fall back to mock planner when no API key', async () => {
     const updates: any[] = [];
 
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
       }
@@ -323,7 +323,7 @@ describe('Phase 7b: Gemini Fallback Behavior', () => {
 
 describe('Phase 7b: Planner disabled mode', () => {
   let agent: ChildProcess;
-  let peer: JsonRpcPeer;
+  let peer: RpcClient;
   let sessionId: string;
 
   beforeAll(async () => {
@@ -331,7 +331,7 @@ describe('Phase 7b: Planner disabled mode', () => {
       stdio: ['pipe', 'pipe', 'inherit'],
     });
 
-    peer = new JsonRpcPeer(
+    peer = new RpcClient(
       agent.stdout as unknown as Readable,
       agent.stdin as unknown as Writable,
       { line: () => {} } as any
@@ -361,7 +361,7 @@ describe('Phase 7b: Planner disabled mode', () => {
   it('should indicate planner is disabled', async () => {
     const updates: any[] = [];
 
-    peer.on('session/update', (params: any) => {
+    peer.onSessionUpdate((params: any) => {
       if (params.sessionId === sessionId) {
         updates.push(params);
       }

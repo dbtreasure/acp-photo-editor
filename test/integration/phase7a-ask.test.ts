@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'child_process';
-import { JsonRpcPeer } from '../../src/common/jsonrpc';
+import { RpcClient } from '../../src/common/rpcClient';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 describe('Phase 7a - :ask Command Integration Tests', () => {
   let agentProc: any;
-  let peer: JsonRpcPeer;
+  let peer: RpcClient;
   let sessionId: string;
   const testImagePath = path.join(process.cwd(), 'test', 'assets', 'test.jpg');
   const testImageUri = pathToFileURL(testImagePath).href;
@@ -18,7 +18,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
       stdio: ['pipe', 'pipe', 'inherit'],
     });
 
-    peer = new JsonRpcPeer(agentProc.stdout, agentProc.stdin, null as any);
+    peer = new RpcClient(agentProc.stdout, agentProc.stdin, { line: () => {} } as any);
 
     // Initialize
     const initRes = await peer.request('initialize', {
@@ -61,7 +61,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
 
   it('should handle basic :ask command with multiple operations', async () => {
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     const result = await peer.request('session/prompt', {
       sessionId,
@@ -87,7 +87,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
 
   it('should handle clamping and report clamped values', async () => {
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     const result = await peer.request('session/prompt', {
       sessionId,
@@ -106,7 +106,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
 
   it('should handle cumulative behavior across commands', async () => {
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     // First, reset the stack
     await peer.request('session/prompt', {
@@ -139,7 +139,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
 
   it('should handle amend-last within single command', async () => {
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     // First, reset the stack
     await peer.request('session/prompt', {
@@ -162,7 +162,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
 
   it('should handle undo/redo/reset commands', async () => {
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     const result = await peer.request('session/prompt', {
       sessionId,
@@ -179,7 +179,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
 
   it('should report ignored terms', async () => {
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     const result = await peer.request('session/prompt', {
       sessionId,
@@ -216,7 +216,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
     });
 
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     const result = await peer.request('session/prompt', {
       sessionId: offSessionId,
@@ -247,7 +247,7 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
     const noImageSessionId = newRes.sessionId;
 
     const updates: any[] = [];
-    peer.on('session/update', (params) => updates.push(params));
+    peer.onSessionUpdate((params) => updates.push(params));
 
     const result = await peer.request('session/prompt', {
       sessionId: noImageSessionId,
