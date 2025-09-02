@@ -16,6 +16,7 @@ import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
 import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src/acp/types';
 import { isITerm2, itermShowImage } from '../src/common/iterm-images';
+import { ThumbnailStore } from '../src/client/thumbnailStore';
 
 const args = minimist(process.argv.slice(2), {
   string: [
@@ -47,7 +48,7 @@ const args = minimist(process.argv.slice(2), {
 const logger = new NdjsonLogger('client');
 
 // Track thumbnails for display
-const thumbnails: Map<string, { metadata?: string; image?: string; mimeType?: string }> = new Map();
+let thumbnails = new ThumbnailStore();
 
 async function main() {
   const agentCmd = args.agent || process.env.ACP_AGENT || '';
@@ -162,19 +163,11 @@ async function main() {
               const block = item.content;
               if (block.type === 'text') {
                 // Store metadata
-                if (!thumbnails.has(toolCallId)) {
-                  thumbnails.set(toolCallId, {});
-                }
-                thumbnails.get(toolCallId)!.metadata = block.text;
+                thumbnails.set(toolCallId, { metadata: block.text });
                 console.log(`[metadata:${toolCallId}] ${block.text}`);
               } else if (block.type === 'image') {
                 // Store image data
-                if (!thumbnails.has(toolCallId)) {
-                  thumbnails.set(toolCallId, {});
-                }
-                const thumb = thumbnails.get(toolCallId)!;
-                thumb.image = block.data;
-                thumb.mimeType = block.mimeType;
+                thumbnails.set(toolCallId, { image: block.data, mimeType: block.mimeType });
 
                 // Display thumbnail info (truncate base64 in logs)
                 const sizeKB = Math.round((block.data.length * 0.75) / 1024); // Estimate from base64
@@ -217,10 +210,11 @@ async function main() {
           if (content && Array.isArray(content)) {
             for (const item of content) {
               if (item.type === 'image') {
-                const thumb = thumbnails.get(toolCallId) || {};
-                thumb.image = item.data;
-                thumb.mimeType = item.mimeType || 'image/png';
-                thumbnails.set(toolCallId, thumb);
+                thumbnails.set(toolCallId, {
+                  image: item.data,
+                  mimeType: item.mimeType || 'image/png',
+                });
+                const thumb = thumbnails.get(toolCallId)!;
 
                 const sizeKB = Math.round((item.data.length * 0.75) / 1024);
                 console.log(`[preview:${toolCallId}] Received ${thumb.mimeType} (${sizeKB}KB)`);
@@ -338,13 +332,14 @@ async function main() {
           process.exit(0);
         } else if (cmd === ':gallery') {
           // Display thumbnail gallery
-          if (thumbnails.size === 0) {
+          const allThumbs = thumbnails.list();
+          if (allThumbs.length === 0) {
             console.log('No thumbnails loaded. Use :open to load images.');
           } else {
             console.log('\nThumbnail Gallery:');
             console.log('==================');
             let index = 1;
-            for (const [id, thumb] of thumbnails) {
+            for (const [id, thumb] of allThumbs) {
               console.log(`${index}. ${thumb.metadata || 'No metadata'}`);
               if (thumb.image && thumb.mimeType) {
                 const sizeKB = Math.round((thumb.image.length * 0.75) / 1024);
@@ -525,7 +520,7 @@ async function main() {
               console.log('Usage: :open <path1> [path2...]');
             } else {
               isPrompting = true;
-              thumbnails.clear(); // Clear previous thumbnails
+              thumbnails = new ThumbnailStore(); // Clear previous thumbnails
               console.log('Opening resources...');
 
               // Build prompt with text and resource_links
@@ -578,8 +573,9 @@ async function main() {
                   console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tPROCESSED`);
                 });
 
-                if (thumbnails.size > 0) {
-                  console.log(`\n${thumbnails.size} thumbnail(s) loaded. Use :gallery to view.`);
+                const loadedThumbs = thumbnails.list();
+                if (loadedThumbs.length > 0) {
+                  console.log(`\n${loadedThumbs.length} thumbnail(s) loaded. Use :gallery to view.`);
                 }
               } catch (e: any) {
                 console.error('[error]', e?.message || String(e));
