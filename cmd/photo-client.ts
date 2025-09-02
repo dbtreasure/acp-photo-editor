@@ -15,7 +15,11 @@ import { JsonRpcPeer } from '../src/common/jsonrpc';
 import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
 import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src/acp/types';
-import { isITerm2, itermShowImage } from '../src/common/iterm-images';
+import {
+  isITerm2,
+  Iterm2Renderer,
+  TerminalImageRenderer,
+} from '../src/common/terminal-image-renderer';
 
 const args = minimist(process.argv.slice(2), {
   string: [
@@ -57,6 +61,8 @@ async function main() {
   // Determine TTY image rendering mode
   const ttyImages = args['tty-images'];
   const useItermImages = ttyImages === 'iterm' || (ttyImages === 'auto' && isITerm2());
+  const renderer: TerminalImageRenderer | null =
+    useItermImages ? new Iterm2Renderer() : null;
 
   if (!agentCmd) {
     console.error('photo-client: --agent <cmd> is required');
@@ -188,12 +194,16 @@ async function main() {
                     const metadata = thumbnails.get(toolCallId)?.metadata;
                     const name = metadata?.split(' ')[0] || `${toolCallId}.png`;
 
-                    itermShowImage(block.data, {
-                      name,
-                      width: args['thumb-width'] || '64', // Default to 64 cells
-                      height: args['thumb-height'] || 'auto',
-                      preserveAspectRatio: true,
-                    });
+                    renderer?.render(
+                      block.data,
+                      {
+                        name,
+                        width: args['thumb-width'] || '64', // Default to 64 cells
+                        height: args['thumb-height'] || 'auto',
+                        preserveAspectRatio: true,
+                      },
+                      process.stdout
+                    );
 
                     console.log(`[iTerm2] Displayed inline: ${name}`);
                   } catch (err: any) {
@@ -228,12 +238,16 @@ async function main() {
                 // Display image in iTerm2 if supported
                 if (useItermImages) {
                   try {
-                    itermShowImage(item.data, {
-                      name: `preview_${toolCallId}.png`,
-                      width: args['thumb-width'] || '64',
-                      height: args['thumb-height'] || 'auto',
-                      preserveAspectRatio: true,
-                    });
+                    renderer?.render(
+                      item.data,
+                      {
+                        name: `preview_${toolCallId}.png`,
+                        width: args['thumb-width'] || '64',
+                        height: args['thumb-height'] || 'auto',
+                        preserveAspectRatio: true,
+                      },
+                      process.stdout
+                    );
                     console.log(`[iTerm2] Displayed preview`);
                   } catch (err: any) {
                     console.log(`[iTerm2] Failed to display: ${err.message}`);
@@ -354,12 +368,16 @@ async function main() {
                 if (useItermImages) {
                   try {
                     const name = thumb.metadata?.split(' ')[0] || `gallery_${index}.png`;
-                    itermShowImage(thumb.image, {
-                      name,
-                      width: args['thumb-width'] || '32', // Smaller for gallery view
-                      height: args['thumb-height'] || 'auto',
-                      preserveAspectRatio: true,
-                    });
+                    renderer?.render(
+                      thumb.image,
+                      {
+                        name,
+                        width: args['thumb-width'] || '32', // Smaller for gallery view
+                        height: args['thumb-height'] || 'auto',
+                        preserveAspectRatio: true,
+                      },
+                      process.stdout
+                    );
                   } catch (err: any) {
                     console.log(`   [iTerm2] Failed to display: ${err.message}`);
                   }
