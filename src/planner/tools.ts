@@ -250,6 +250,33 @@ export const PLANNER_RESPONSE_SCHEMA = {
       },
       description: 'Array of tool calls to execute',
     },
+    // Phase 7f: Confidence and clarification support
+    confidence: {
+      type: 'number',
+      minimum: 0,
+      maximum: 1,
+      description: 'Confidence score from 0 to 1 (1 = very confident)',
+    },
+    needsClarification: {
+      type: 'object',
+      properties: {
+        question: {
+          type: 'string',
+          description: 'The clarification question to ask the user',
+        },
+        options: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional multiple choice options',
+        },
+        context: {
+          type: 'string',
+          description: 'Additional context for the clarification',
+        },
+      },
+      required: ['question'],
+      description: 'Request for clarification when intent is ambiguous',
+    },
   },
   required: ['calls'],
 };
