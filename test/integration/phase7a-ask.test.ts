@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'child_process';
 import { JsonRpcPeer } from '../../src/common/jsonrpc';
+import { NdjsonLogger } from '../../src/common/logger';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -18,7 +19,8 @@ describe('Phase 7a - :ask Command Integration Tests', () => {
       stdio: ['pipe', 'pipe', 'inherit'],
     });
 
-    peer = new JsonRpcPeer(agentProc.stdout, agentProc.stdin, null as any);
+    const testLogger = new NdjsonLogger('test');
+    peer = new JsonRpcPeer(agentProc.stdout, agentProc.stdin, testLogger);
 
     // Initialize
     const initRes = await peer.request('initialize', {
