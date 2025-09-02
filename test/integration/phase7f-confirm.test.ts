@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { MockPlanner } from '../../src/planner/mock';
 import { Planner, PlannerInput, PlannerOutput } from '../../src/planner/types';
 

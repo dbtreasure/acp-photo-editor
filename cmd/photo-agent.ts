@@ -44,6 +44,19 @@ let currentSessionId: string | null = null;
 let cancelled = false;
 let mcpClients: Map<string, Client> = new Map();
 
+// Phase 7f: Map to store pending plans for confirmation
+const pendingPlans = new Map<string, { calls: PlannedCall[], timestamp: number }>();
+
+// Clean up stale pending plans every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, plan] of pendingPlans.entries()) {
+    if (now - plan.timestamp > 60000) { // 1 minute timeout
+      pendingPlans.delete(sessionId);
+    }
+  }
+}, 300000);
+
 // Per-image edit state management
 const imageStacks = new Map<string, EditStackManager>();
 let lastLoadedImage: string | null = null;
@@ -209,12 +222,11 @@ createNdjsonReader(process.stdin as unknown as Readable, (obj: any) => {
     // Phase 7f: Check for confirmation responses (accept with or without colon)
     const lowerText = text.toLowerCase();
     if (lowerText === ':yes' || lowerText === ':no' || lowerText === 'yes' || lowerText === 'no') {
-      const pendingPlanKey = `pending_plan_${currentSessionId}`;
-      const pendingPlan = (global as any)[pendingPlanKey];
+      const pendingPlan = pendingPlans.get(currentSessionId!);
       
       if (pendingPlan && Date.now() - pendingPlan.timestamp < 60000) { // 1 minute timeout
         // Clear the pending plan
-        delete (global as any)[pendingPlanKey];
+        pendingPlans.delete(currentSessionId!);
         
         if (lowerText === ':yes' || lowerText === 'yes') {
           // Apply the pending plan
@@ -903,6 +915,18 @@ async function handlePendingPlan(calls: PlannedCall[], sessionId: string, cwd: s
           }
           break;
         }
+        
+        case 'export_image': {
+          // Export will be handled after the preview is rendered
+          appliedOps.push('Export (pending)');
+          break;
+        }
+        
+        case 'undo':
+        case 'redo':
+        case 'reset':
+          // These operations should be handled separately if needed
+          break;
       }
     }
     
@@ -942,6 +966,34 @@ async function handlePendingPlan(calls: PlannedCall[], sessionId: string, cwd: s
         });
       }
     });
+    
+    // Handle export if it was in the plan
+    const exportCall = calls.find(c => c.fn === 'export_image');
+    if (exportCall && 'args' in exportCall) {
+      await withSpan('pending_plan.export', async (exportSpan) => {
+        const result = await client.callTool({
+          name: 'export_image',
+          arguments: {
+            uri: lastLoadedImage,
+            editStack: stackManager.getStack(),
+            ...exportCall.args,
+          },
+        });
+        
+        const content = result.content as any;
+        if (content?.[0]?.type === 'text') {
+          const exportData = JSON.parse(content[0].text);
+          notify('session/update', {
+            sessionId,
+            sessionUpdate: 'agent_message_chunk',
+            content: { 
+              type: 'text', 
+              text: `📁 Exported to: ${exportData.path}`
+            },
+          });
+        }
+      });
+    }
     
     // Summary
     notify('session/update', {
@@ -1450,7 +1502,8 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
   }
   
   // Phase 7f: Handle confirmation if needed
-  if (confirmMode && !autoConfirm && finalCalls.length > 0) {
+  // Check if either --confirm or --auto-confirm was used
+  if ((confirmMode || autoConfirm) && finalCalls.length > 0) {
     let shouldReturn = false;
     await withSpan('confirmation.request', async (confirmSpan) => {
       // Only auto-confirm if autoConfirm flag is set AND confidence is high
@@ -1484,12 +1537,11 @@ async function handleAskCommand(command: string, sessionId: string, cwd: string,
           session_id: sessionId
         });
         
-        // Store the pending plan in a global variable so we can apply it on next prompt
-        const pendingPlanKey = `pending_plan_${sessionId}`;
-        (global as any)[pendingPlanKey] = {
+        // Store the pending plan so we can apply it on next prompt
+        pendingPlans.set(sessionId, {
           calls: finalCalls,
           timestamp: Date.now()
-        };
+        });
         
         // Send the plan preview to the user
         const confirmationMessage = planPreview + '\n\nType ":yes" to apply or ":no" to cancel';
