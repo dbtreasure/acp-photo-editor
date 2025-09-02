@@ -7,15 +7,15 @@ try {
 }
 
 import minimist from 'minimist';
-import { spawn } from 'child_process';
 import path from 'path';
 import readline from 'readline';
 import { pathToFileURL } from 'url';
-import { JsonRpcPeer } from '../src/common/jsonrpc';
 import { NdjsonLogger } from '../src/common/logger';
 import { guessMimeType } from '../src/common/mime';
 import { PromptContent, ContentBlockResourceLink, MCPServerConfig } from '../src/acp/types';
 import { isITerm2, itermShowImage } from '../src/common/iterm-images';
+import { spawnAgentClient } from '../src/client/agentClient';
+import { createSessionState } from '../src/client/sessionState';
 
 const args = minimist(process.argv.slice(2), {
   string: [
@@ -24,20 +24,19 @@ const args = minimist(process.argv.slice(2), {
     'cwd',
     'demo',
     'tty-images',
-    'thumb-width',
-    'thumb-height',
     'planner',
-    'planner-model',
+    'gemini-api-key',
     'planner-timeout',
     'planner-max-calls',
+    'thumb-width',
+    'thumb-height',
   ],
-  boolean: ['interactive', 'mcp', 'planner-log-text'],
-  alias: { i: 'interactive' },
+  boolean: ['help', 'interactive', 'mcp', 'planner-log-text'],
   default: {
-    mcp: true, // Enable MCP by default
-    'tty-images': 'auto', // Auto-detect iTerm2
-    planner: 'mock', // Default to mock planner
-    'planner-model': 'gemini-2.5-flash',
+    interactive: true,
+    mcp: false,
+    'tty-images': 'auto', // auto, iterm, none
+    'planner': 'mock', // mock or gemini
     'planner-timeout': '10000',
     'planner-max-calls': '6',
     'planner-log-text': false,
@@ -45,9 +44,6 @@ const args = minimist(process.argv.slice(2), {
 });
 
 const logger = new NdjsonLogger('client');
-
-// Track thumbnails for display
-const thumbnails: Map<string, { metadata?: string; image?: string; mimeType?: string }> = new Map();
 
 async function main() {
   const agentCmd = args.agent || process.env.ACP_AGENT || '';
@@ -63,9 +59,7 @@ async function main() {
     process.exit(2);
   }
 
-  // Spawn agent
-  const child = spawn(agentCmd, agentArgs, { stdio: ['pipe', 'pipe', 'inherit'] });
-  const peer = new JsonRpcPeer(child.stdout, child.stdin, logger);
+  const { peer } = spawnAgentClient({ agentCmd, agentArgs, logger });
 
   // Configure MCP servers if enabled
   const mcpServers: MCPServerConfig[] = args.mcp
@@ -79,590 +73,451 @@ async function main() {
       ]
     : [];
 
-  // Demo mode: run handshake and ping
-  if (args.demo === 'ping') {
-    try {
-      const initRes = await peer.request('initialize', {
-        protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      });
-      console.log('DEMO:INIT:OK', JSON.stringify(initRes));
+  // Configure planner settings
+  const plannerConfig: Record<string, any> = {
+    type: args.planner || 'mock',
+  };
 
-      const newRes = await peer.request('session/new', {
-        cwd,
-        mcpServers,
-        planner: args.planner,
-        plannerModel: args['planner-model'],
-        plannerTimeout: parseInt(args['planner-timeout']),
-        plannerMaxCalls: parseInt(args['planner-max-calls']),
-        plannerLogText: args['planner-log-text'],
-      });
-      const sessionId = newRes.sessionId;
-      console.log('DEMO:SESSION', sessionId);
-
-      peer.on('session/update', (params: any) => {
-        const content = params?.content?.text ?? '';
-        console.log('DEMO:CHUNK', content);
-      });
-
-      const pRes = await peer.request('session/prompt', {
-        sessionId,
-        prompt: [{ type: 'text', text: 'ping' }],
-      });
-      console.log('DEMO:STOP', pRes.stopReason);
-      process.exit(pRes.stopReason === 'end_turn' ? 0 : 3);
-    } catch (err: any) {
-      console.error('DEMO:ERROR', err?.message || String(err));
-      process.exit(1);
-    }
-    return;
+  // Add Gemini-specific settings if using Gemini planner
+  if (plannerConfig.type === 'gemini') {
+    plannerConfig.apiKey = args['gemini-api-key'] || process.env.GEMINI_API_KEY;
+    plannerConfig.timeoutMs = parseInt(args['planner-timeout'] || '10000');
+    plannerConfig.maxCalls = parseInt(args['planner-max-calls'] || '6');
+    plannerConfig.logText = args['planner-log-text'] === true;
   }
 
-  // Initialize protocol
-  try {
-    const initRes = await peer.request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-    });
-    console.log('Connected to agent');
-    console.log(`Protocol version: ${initRes.protocolVersion}`);
-    console.log(`Agent capabilities:`, JSON.stringify(initRes.agentCapabilities, null, 2));
-
-    // Check for version mismatch
-    if (initRes.protocolVersion !== 1) {
-      console.error(
-        `ERROR: Protocol version mismatch. Client supports version 1, agent returned version ${initRes.protocolVersion}`
-      );
-      process.exit(1);
-    }
-
-    const newRes = await peer.request('session/new', { cwd, mcpServers, planner: args.planner });
-    const sessionId = newRes.sessionId;
-    console.log(`Session created: ${sessionId}`);
-    if (mcpServers.length > 0) {
-      console.log(`MCP servers configured: ${mcpServers.map((s) => s.name).join(', ')}`);
-    }
-    if (useItermImages) {
-      console.log(`iTerm2 inline images: enabled${ttyImages === 'auto' ? ' (auto-detected)' : ''}`);
-    }
-
-    // Store readline interface reference for pausing/resuming
-    let rlInterface: readline.Interface | null = null;
-    let hasReceivedAgentMessage = false;
+  // Phase 7d: Support demo mode
+  const demoMode = args.demo || process.env.ACP_DEMO_MODE;
+  let demoImages: string[] = [];
+  if (demoMode) {
+    // Parse demo mode argument (can be a number or path to image)
+    const demoArg = String(demoMode);
+    const demoCount = parseInt(demoArg);
     
-    // Set up session update handler
-    peer.on('session/update', (params: any) => {
-      // Handle tool_call_update
-      if (params.sessionUpdate === 'tool_call_update') {
-        const { toolCallId, status, content } = params;
+    if (!isNaN(demoCount) && demoCount > 0) {
+      // Generate N demo image paths
+      const demoDir = path.join(cwd, 'test', 'fixtures');
+      for (let i = 1; i <= Math.min(demoCount, 10); i++) {
+        const imagePath = path.join(demoDir, `demo${i}.jpg`);
+        demoImages.push(pathToFileURL(imagePath).href);
+      }
+    } else if (demoArg.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+      // Use specific image file
+      const imagePath = path.resolve(cwd, demoArg);
+      demoImages.push(pathToFileURL(imagePath).href);
+    }
+    
+    if (demoImages.length > 0) {
+      console.log(`Demo mode: Using ${demoImages.length} test image(s)`);
+    }
+  }
 
-        if (status === 'in_progress' && content) {
-          for (const item of content) {
-            if (item.type === 'content') {
-              const block = item.content;
-              if (block.type === 'text') {
-                // Store metadata
-                if (!thumbnails.has(toolCallId)) {
-                  thumbnails.set(toolCallId, {});
-                }
-                thumbnails.get(toolCallId)!.metadata = block.text;
-                console.log(`[metadata:${toolCallId}] ${block.text}`);
-              } else if (block.type === 'image') {
-                // Store image data
-                if (!thumbnails.has(toolCallId)) {
-                  thumbnails.set(toolCallId, {});
-                }
-                const thumb = thumbnails.get(toolCallId)!;
-                thumb.image = block.data;
-                thumb.mimeType = block.mimeType;
+  // Initialize
+  const initRes = await peer.request('initialize', {
+    protocolVersion: 1,
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+    clientInfo: {
+      name: 'photo-client',
+      version: '0.1.0',
+    },
+  });
 
-                // Display thumbnail info (truncate base64 in logs)
-                const sizeKB = Math.round((block.data.length * 0.75) / 1024); // Estimate from base64
-                const preview = block.data.substring(0, 20) + '...';
-                console.log(`[thumbnail:${toolCallId}] Received ${block.mimeType} (${sizeKB}KB, data="${preview}")`);
+  logger.line('info', { initialize_result: initRes });
 
-                // Display inline image in iTerm2 if enabled
-                if (useItermImages && block.data) {
-                  try {
-                    // Extract name from metadata or use toolCallId
-                    const metadata = thumbnails.get(toolCallId)?.metadata;
-                    const name = metadata?.split(' ')[0] || `${toolCallId}.png`;
+  if (initRes.protocolVersion !== 1) {
+    console.error(`Version mismatch: agent returned ${initRes.protocolVersion}, expected 1`);
+    process.exit(3);
+  }
 
-                    itermShowImage(block.data, {
-                      name,
-                      width: args['thumb-width'] || '64', // Default to 64 cells
-                      height: args['thumb-height'] || 'auto',
-                      preserveAspectRatio: true,
-                    });
+  // Create session with MCP servers
+  const sessionRes = await peer.request('session/new', {
+    cwd: pathToFileURL(cwd).href,
+    resourceLinks: [] as ContentBlockResourceLink[],
+    mcpServers: mcpServers.length > 0 ? mcpServers : undefined,
+    plannerConfig: plannerConfig.type ? plannerConfig : undefined,
+    demoImages: demoImages.length > 0 ? demoImages : undefined,
+  });
 
-                    console.log(`[iTerm2] Displayed inline: ${name}`);
-                  } catch (err: any) {
-                    console.log(`[iTerm2] Failed to display: ${err.message}`);
-                  }
-                }
+  const sessionId = sessionRes.sessionId;
+  console.log(`Session created: ${sessionId}`);
+  if (mcpServers.length > 0) {
+    console.log(`MCP servers configured: ${mcpServers.map((s) => s.name).join(', ')}`);
+  }
+  if (useItermImages) {
+    console.log(`iTerm2 inline images: enabled${ttyImages === 'auto' ? ' (auto-detected)' : ''}`);
+  }
 
-                // Log truncated version for NDJSON
-                logger.line('info', {
-                  tool_call_thumbnail: toolCallId,
-                  mimeType: block.mimeType,
-                  sizeKB,
-                  dataPreview: preview,
-                  itermRendered: useItermImages,
+  // Store readline interface reference and flag for message tracking
+  let rlInterface: readline.Interface | null = null;
+  let hasReceivedAgentMessage = false;
+
+  // Create session state handler with callback for agent messages
+  const sessionState = createSessionState(peer, {
+    logger,
+    useItermImages,
+    thumbWidth: args['thumb-width'],
+    thumbHeight: args['thumb-height'],
+    onAgentMessage: () => {
+      hasReceivedAgentMessage = true;
+    }
+  });
+  const thumbnails = sessionState.thumbnails;
+
+  // Interactive mode with REPL
+  if (args.interactive) {
+    console.log('\nPhoto Editor ACP Client - Interactive Mode');
+    console.log('Commands:');
+    console.log('  :ping            - Send a ping message to the agent');
+    console.log('  :open <path...>  - Open image file(s)');
+    console.log('  :wb [options]    - Adjust white balance');
+    console.log('  :exposure <ev>   - Adjust exposure (EV stops)');
+    console.log('  :contrast <amt>  - Adjust contrast');
+    console.log('  :saturation <amt> - Adjust saturation');
+    console.log('  :vibrance <amt>  - Adjust vibrance (smart saturation)');
+    console.log('  :crop <aspect>   - Crop image (1:1, 3:2, 4:3, 16:9, or WxH)');
+    console.log('  :rotate <angle>  - Rotate image by angle in degrees');
+    console.log('  :auto [wb|exposure|contrast|all] - Auto-adjust settings');
+    console.log('  :render          - Render current edits');
+    console.log('  :renderall       - Render all loaded images');
+    console.log('  :ask <text>      - Use AI planner to interpret editing request');
+    console.log('  :export <path>   - Export edited image');
+    console.log('  :undo            - Undo last operation');
+    console.log('  :redo            - Redo undone operation');
+    console.log('  :reset           - Reset all edits');
+    console.log('  :stack           - Show current edit stack');
+    console.log('  :status          - Show agent status');
+    console.log('  :gallery         - Show loaded images (requires iTerm2)');
+    console.log('  :yes             - Confirm pending operation (Phase 7f)');
+    console.log('  :no              - Cancel pending operation (Phase 7f)');
+    console.log('  :cancel          - Cancel current operation');
+    console.log('  :help            - Show this help message');
+    console.log('  :quit            - Exit the program');
+    console.log('');
+    console.log('White balance options:');
+    console.log('  :wb temp <value>   - Adjust temperature (-100 to 100)');
+    console.log('  :wb tint <value>   - Adjust tint (-100 to 100)');
+    console.log('  :wb gray <x> <y>   - Set gray point (0-1 normalized)');
+    console.log('  :wb auto           - Auto white balance');
+    console.log('');
+    console.log('Planner settings:');
+    console.log('  --planner=<type>            - Planner type: mock or gemini (default: mock)');
+    console.log('  --gemini-api-key=<key>      - Gemini API key (or GEMINI_API_KEY env var)');
+    console.log('  --planner-timeout=<ms>      - Planner timeout in ms (default: 10000)');
+    console.log('  --planner-max-calls=<n>     - Max operations per request (default: 6)');
+    console.log('  --planner-log-text          - Log planner text (default: false)');
+    console.log('');
+    console.log('Image display settings:');
+    console.log('  --tty-images=<mode>         - TTY image mode: auto, iterm, none (default: auto)');
+    console.log('  --thumb-width=<value>       - Set thumbnail width (default: 64)');
+    console.log('  --thumb-height=<value>      - Set thumbnail height (default: auto)');
+    console.log('');
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: '> ',
+    });
+
+    // Store reference for use in session/update handler
+    rlInterface = rl;
+
+    let isPrompting = false;
+
+    rl.prompt();
+
+    rl.on('line', async (line) => {
+      const cmd = line.trim();
+
+      if (cmd === ':help' || cmd === ':h') {
+        console.log('Available commands:');
+        console.log('  :ping     - Send a ping message');
+        console.log('  :cancel   - Cancel the current prompt');
+        console.log('  :status   - Show agent status');
+        console.log('  :gallery  - Show image thumbnails (iTerm2 only)');
+        console.log('  :yes      - Confirm pending operation');
+        console.log('  :no       - Cancel pending operation');
+        console.log('  :quit     - Exit');
+      } else if (cmd === ':quit' || cmd === ':q' || cmd === ':exit') {
+        process.exit(0);
+      } else if (cmd === ':status') {
+        console.log(`Session: ${sessionId}`);
+        console.log(`Working directory: ${cwd}`);
+        console.log(`MCP enabled: ${mcpServers.length > 0}`);
+        console.log(`Planner: ${plannerConfig.type}`);
+        console.log(`iTerm2 images: ${useItermImages}`);
+        console.log(`Demo mode: ${demoImages.length > 0 ? `${demoImages.length} images` : 'off'}`);
+      } else if (cmd === ':gallery') {
+        if (!useItermImages) {
+          console.log('Gallery requires iTerm2. Use --tty-images=iterm to enable.');
+        } else if (thumbnails.size === 0) {
+          console.log('No images loaded yet. Use :open to load images.');
+        } else {
+          console.log(`Gallery: ${thumbnails.size} image(s)`);
+          for (const [id, thumb] of thumbnails) {
+            if (thumb.image) {
+              const name = thumb.metadata?.split(' ')[0] || `${id}.png`;
+              try {
+                itermShowImage(thumb.image, {
+                  name,
+                  width: '32',
+                  height: 'auto',
+                  preserveAspectRatio: true,
+                  inline: false,
                 });
+                console.log(`  - ${name}`);
+              } catch (err: any) {
+                console.log(`  - ${name} (display failed: ${err.message})`);
               }
             }
           }
-        } else if (status === 'completed') {
-          // Check if we have image content in the completed update
-          if (content && Array.isArray(content)) {
-            for (const item of content) {
-              if (item.type === 'image') {
-                const thumb = thumbnails.get(toolCallId) || {};
-                thumb.image = item.data;
-                thumb.mimeType = item.mimeType || 'image/png';
-                thumbnails.set(toolCallId, thumb);
-
-                const sizeKB = Math.round((item.data.length * 0.75) / 1024);
-                console.log(`[preview:${toolCallId}] Received ${thumb.mimeType} (${sizeKB}KB)`);
-
-                // Display image in iTerm2 if supported
-                if (useItermImages) {
-                  try {
-                    itermShowImage(item.data, {
-                      name: `preview_${toolCallId}.png`,
-                      width: args['thumb-width'] || '64',
-                      height: args['thumb-height'] || 'auto',
-                      preserveAspectRatio: true,
-                    });
-                    console.log(`[iTerm2] Displayed preview`);
-                  } catch (err: any) {
-                    console.log(`[iTerm2] Failed to display: ${err.message}`);
-                  }
-                }
-              }
-            }
+        }
+      } else if (cmd === ':ping') {
+        if (isPrompting) {
+          console.log('A prompt is already in progress. Use :cancel to cancel it.');
+        } else {
+          isPrompting = true;
+          console.log('Sending ping...');
+          try {
+            const pRes = await peer.request('session/prompt', {
+              sessionId,
+              prompt: [{ type: 'text', text: 'ping' }],
+            });
+            console.log(`[result] stopReason: ${pRes.stopReason}`);
+          } catch (e: any) {
+            console.error('[error]', e?.message || String(e));
           }
-          console.log(`[completed:${toolCallId}]`);
-        } else if (status === 'failed') {
-          console.log(`[failed:${toolCallId}]`);
+          isPrompting = false;
+        }
+      } else if (cmd.startsWith(':open')) {
+        // Extract file paths
+        const pathArgs = cmd.substring(5).trim();
+        if (!pathArgs) {
+          console.log('Usage: :open <path...>. Example: :open image1.jpg image2.png');
+        } else {
+          // Handle quoted paths and multiple files
+          const paths = pathArgs.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+          const resources: ContentBlockResourceLink[] = paths.map((p) => {
+            // Remove quotes if present
+            const cleanPath = p.replace(/^"|"$/g, '');
+            const fullPath = path.resolve(cwd, cleanPath);
+            const mimeType = guessMimeType(fullPath);
+            return {
+              name: path.basename(fullPath),
+              uri: pathToFileURL(fullPath).href,
+              mimeType,
+            };
+          });
+
+          if (resources.length === 0) {
+            console.log('No valid paths provided');
+          } else {
+            isPrompting = true;
+            console.log(`Opening ${resources.length} file(s)...`);
+            try {
+              const prompt: PromptContent[] = [
+                { type: 'text', text: `:open ${resources.map((r) => r.name).join(' ')}` },
+              ];
+              resources.forEach((r) => prompt.push({ type: 'resource', resource: r }));
+
+              const pRes = await peer.request('session/prompt', {
+                sessionId,
+                prompt,
+              });
+              console.log(`[result] stopReason: ${pRes.stopReason}`);
+            } catch (e: any) {
+              console.error('[error]', e?.message || String(e));
+            }
+            isPrompting = false;
+          }
+        }
+      } else if (cmd.startsWith(':ask')) {
+        // Parse the :ask command
+        let askText = cmd.substring(4).trim();
+        const withImage = askText.includes('--with-image');
+        const forceConfirm = askText.includes('--confirm');
+        const autoConfirm = askText.includes('--auto-confirm');
+        
+        // Remove flags from text
+        askText = askText
+          .replace('--with-image', '')
+          .replace('--confirm', '')
+          .replace('--auto-confirm', '')
+          .trim();
+        
+        // Handle quoted text
+        if (
+          (askText.startsWith('"') && askText.endsWith('"')) ||
+          (askText.startsWith("'") && askText.endsWith("'"))
+        ) {
+          askText = askText.slice(1, -1);
+        }
+        if (!askText) {
+          console.log('Usage: :ask [--with-image] [--confirm] [--auto-confirm] <text>');
+          console.log('  --with-image: Include current image for vision analysis');
+          console.log('  --confirm: Always ask for confirmation before applying');
+          console.log('  --auto-confirm: Auto-apply if confidence >= 80%');
+        } else {
+          isPrompting = true;
+          // Pause readline to prevent interference
+          rl.pause();
+          console.log(`Processing: ${askText}${withImage ? ' (with image)' : ''}${forceConfirm ? ' (confirm)' : ''}${autoConfirm ? ' (auto-confirm)' : ''}`);
+          try {
+            // Build command text with flags
+            let commandText = ':ask';
+            if (withImage) commandText += ' --with-image';
+            if (forceConfirm) commandText += ' --confirm';
+            if (autoConfirm) commandText += ' --auto-confirm';
+            commandText += ` ${askText}`;
+            
+            const pRes = await peer.request('session/prompt', {
+              sessionId,
+              prompt: [{ type: 'text', text: commandText }],
+            });
+            // Give time for all output to be displayed
+            await new Promise(resolve => setTimeout(resolve, 100));
+            console.log(`[result] stopReason: ${pRes.stopReason}`);
+            // Resume readline
+            rl.resume();
+          } catch (e: any) {
+            console.error('[error]', e?.message || String(e));
+            rl.resume();
+          }
+          isPrompting = false;
+        }
+      } else if (cmd.startsWith(':export')) {
+        // Handle export command
+        if (isPrompting) {
+          console.log('A prompt is already in progress. Use :cancel to cancel it.');
+        } else {
+          const exportArgs = cmd.substring(7).trim();
+          isPrompting = true;
+          console.log(`Exporting...`);
+          try {
+            const pRes = await peer.request('session/prompt', {
+              sessionId,
+              prompt: [{ type: 'text', text: `:export ${exportArgs}` }],
+            });
+            console.log(`[result] stopReason: ${pRes.stopReason}`);
+          } catch (e: any) {
+            console.error('[error]', e?.message || String(e));
+          }
+          isPrompting = false;
+        }
+      } else if (
+        cmd.startsWith(':wb') ||
+        cmd.startsWith(':exposure') ||
+        cmd.startsWith(':contrast') ||
+        cmd.startsWith(':saturation') ||
+        cmd.startsWith(':vibrance') ||
+        cmd.startsWith(':crop') ||
+        cmd.startsWith(':rotate') ||
+        cmd.startsWith(':auto') ||
+        cmd.startsWith(':render') ||
+        cmd === ':undo' ||
+        cmd === ':redo' ||
+        cmd === ':reset' ||
+        cmd === ':stack'
+      ) {
+        // Forward editing commands to agent
+        if (isPrompting) {
+          console.log('A prompt is already in progress. Use :cancel to cancel it.');
+        } else {
+          isPrompting = true;
+          console.log(`Processing: ${cmd}`);
+          try {
+            const pRes = await peer.request('session/prompt', {
+              sessionId,
+              prompt: [{ type: 'text', text: cmd }],
+            });
+            console.log(`[result] stopReason: ${pRes.stopReason}`);
+          } catch (e: any) {
+            console.error('[error]', e?.message || String(e));
+          }
+          isPrompting = false;
+        }
+      } else if (cmd === ':cancel') {
+        if (!isPrompting) {
+          console.log('No prompt in progress to cancel.');
+        } else {
+          console.log('Sending cancel...');
+          peer.notify('session/cancel', { sessionId });
+        }
+      } else if (cmd === ':yes' || cmd === ':no') {
+        // Phase 7f: Handle confirmation responses
+        if (isPrompting) {
+          console.log('A prompt is already in progress. Use :cancel to cancel it.');
+        } else {
+          isPrompting = true;
+          console.log(`Sending: ${cmd}`);
+          try {
+            const pRes = await peer.request('session/prompt', {
+              sessionId,
+              prompt: [{ type: 'text', text: cmd }],
+            });
+            console.log(`[result] stopReason: ${pRes.stopReason}`);
+          } catch (e: any) {
+            console.error('[error]', e?.message || String(e));
+          }
+          isPrompting = false;
+        }
+      } else if (cmd.startsWith(':')) {
+        console.log(`Unknown command: ${cmd}`);
+      } else if (cmd.length > 0) {
+        // Send custom text (for future phases)
+        if (isPrompting) {
+          console.log('A prompt is already in progress. Use :cancel to cancel it.');
+        } else {
+          isPrompting = true;
+          console.log(`Sending: ${cmd}`);
+          try {
+            // For non-command text, check if it's a yes/no response
+            const lowerCmd = cmd.toLowerCase();
+            if (lowerCmd === 'yes' || lowerCmd === 'no') {
+              // Convert to :yes or :no for consistency
+              const pRes = await peer.request('session/prompt', {
+                sessionId,
+                prompt: [{ type: 'text', text: `:${lowerCmd}` }],
+              });
+              console.log(`[result] stopReason: ${pRes.stopReason}`);
+            } else {
+              const pRes = await peer.request('session/prompt', {
+                sessionId,
+                prompt: [{ type: 'text', text: cmd }],
+              });
+              console.log(`[result] stopReason: ${pRes.stopReason}`);
+            }
+          } catch (e: any) {
+            console.error('[error]', e?.message || String(e));
+          }
+          isPrompting = false;
         }
       }
-      // Handle regular message chunks
-      else if (params.sessionUpdate === 'agent_message_chunk') {
-        const content = params?.content?.text ?? '';
-        hasReceivedAgentMessage = true;
-        // Split multi-line content and prefix each line
-        const lines = content.split('\n');
-        lines.forEach((line: string) => {
-          console.log(`[agent] ${line}`);
-        });
+
+      // Only re-prompt if we haven't received agent messages
+      // If we did receive messages, delay the prompt to ensure they're visible
+      if (hasReceivedAgentMessage) {
+        hasReceivedAgentMessage = false;
+        setTimeout(() => rl.prompt(), 100);
+      } else {
+        rl.prompt();
       }
     });
 
-    // Interactive mode with REPL
-    if (args.interactive) {
-      console.log('\nPhoto Editor ACP Client - Interactive Mode');
-      console.log('Commands:');
-      console.log('  :ping            - Send a ping message to the agent');
-      console.log('  :open <path...>  - Open image file(s)');
-      console.log('  :wb [options]    - Adjust white balance');
-      console.log('    --gray x,y     - Set gray point (0-1 normalized)');
-      console.log('    --temp n       - Temperature adjustment (-100 to 100)');
-      console.log('    --tint n       - Tint adjustment (-100 to 100)');
-      console.log("    --new-op       - Force new operation (don't amend last)");
-      console.log('  :exposure        - Adjust exposure');
-      console.log('    --ev n         - Exposure value (-3 to 3 stops)');
-      console.log("    --new-op       - Force new operation (don't amend last)");
-      console.log('  :contrast        - Adjust contrast');
-      console.log('    --amt n        - Contrast amount (-100 to 100)');
-      console.log("    --new-op       - Force new operation (don't amend last)");
-      console.log('  :saturation      - Adjust saturation');
-      console.log('    --amt n        - Saturation amount (-100 to 100)');
-      console.log("    --new-op       - Force new operation (don't amend last)");
-      console.log('  :vibrance        - Adjust vibrance (soft saturation)');
-      console.log('    --amt n        - Vibrance amount (-100 to 100)');
-      console.log("    --new-op       - Force new operation (don't amend last)");
-      console.log('  :auto <type>     - Auto adjustments');
-      console.log('    wb             - Auto white balance');
-      console.log('    ev             - Auto exposure');
-      console.log('    contrast       - Auto contrast');
-      console.log('    all            - Apply all auto adjustments');
-      console.log('  :hist            - Show histogram and clipping info');
-      console.log('  :crop [options]  - Apply crop/straighten to current image');
-      console.log('    --aspect 1:1   - Crop to aspect ratio (1:1, 16:9, 3:2, etc)');
-      console.log('    --rect x,y,w,h - Crop to normalized rectangle [0-1]');
-      console.log('    --angle deg    - Rotate/straighten by degrees');
-      console.log("    --new-op       - Force new operation (don't amend last)");
-      console.log('  :undo            - Undo last edit operation');
-      console.log('  :redo            - Redo previously undone operation');
-      console.log('  :reset           - Reset to original image');
-      console.log('  :ask [--with-image] <text> - Natural language editing (Phase 7a/7c)');
-      console.log('    --with-image     - Include preview image for visual analysis (WB only)');
-      console.log('    Examples: :ask warmer, +0.5 ev, more contrast, crop square');
-      console.log('              :ask cool by 15, contrast -10, 16:9, straighten 1.2°');
-      console.log('              :ask --with-image "fix white balance"');
-      console.log('  :export [opts]   - Export edited image to disk');
-      console.log('    --format jpeg|png    - Output format (default: jpeg)');
-      console.log('    --quality 1-100      - JPEG quality (default: 90)');
-      console.log('    --dst <path>         - Destination path (default: ./Export/)');
-      console.log('    --overwrite          - Overwrite existing files');
-      console.log('  :cancel          - Cancel the current prompt');
-      console.log('  :gallery         - Show thumbnail gallery');
-      console.log('  :exit            - Exit the client');
-      console.log('');
-      console.log('Options:');
-      console.log('  --tty-images=auto|iterm|off - Control inline image display (default: auto)');
-      console.log('  --thumb-width=<value>       - Set thumbnail width (default: 64 cells)');
-      console.log('  --thumb-height=<value>      - Set thumbnail height (default: auto)');
-      console.log('');
-
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        prompt: '> ',
-      });
-      
-      // Store reference for use in session/update handler
-      rlInterface = rl;
-
-      let isPrompting = false;
-
-      rl.prompt();
-
-      rl.on('line', async (line) => {
-        const cmd = line.trim();
-
-        if (cmd === ':exit') {
-          console.log('Goodbye!');
-          rl.close();
-          process.exit(0);
-        } else if (cmd === ':gallery') {
-          // Display thumbnail gallery
-          if (thumbnails.size === 0) {
-            console.log('No thumbnails loaded. Use :open to load images.');
-          } else {
-            console.log('\nThumbnail Gallery:');
-            console.log('==================');
-            let index = 1;
-            for (const [id, thumb] of thumbnails) {
-              console.log(`${index}. ${thumb.metadata || 'No metadata'}`);
-              if (thumb.image && thumb.mimeType) {
-                const sizeKB = Math.round((thumb.image.length * 0.75) / 1024);
-                console.log(`   Thumbnail: ${thumb.mimeType} (${sizeKB}KB)`);
-
-                // Display image in iTerm2 if supported
-                if (useItermImages) {
-                  try {
-                    const name = thumb.metadata?.split(' ')[0] || `gallery_${index}.png`;
-                    itermShowImage(thumb.image, {
-                      name,
-                      width: args['thumb-width'] || '32', // Smaller for gallery view
-                      height: args['thumb-height'] || 'auto',
-                      preserveAspectRatio: true,
-                    });
-                  } catch (err: any) {
-                    console.log(`   [iTerm2] Failed to display: ${err.message}`);
-                  }
-                }
-              }
-              index++;
-            }
-            console.log('');
-          }
-        } else if (cmd === ':ping') {
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            isPrompting = true;
-            console.log('Sending ping...');
-            try {
-              const pRes = await peer.request('session/prompt', {
-                sessionId,
-                prompt: [{ type: 'text', text: 'ping' }],
-              });
-              console.log(`[result] stopReason: ${pRes.stopReason}`);
-            } catch (e: any) {
-              console.error('[error]', e?.message || String(e));
-            }
-            isPrompting = false;
-          }
-        } else if (
-          cmd.startsWith(':crop') ||
-          cmd === ':undo' ||
-          cmd === ':redo' ||
-          cmd === ':reset' ||
-          cmd.startsWith(':wb') ||
-          cmd.startsWith(':exposure') ||
-          cmd.startsWith(':contrast') ||
-          cmd.startsWith(':saturation') ||
-          cmd.startsWith(':vibrance') ||
-          cmd.startsWith(':auto') ||
-          cmd === ':hist'
-        ) {
-          // Handle edit commands
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            isPrompting = true;
-            console.log(`Executing ${cmd.split(' ')[0]}...`);
-            try {
-              const pRes = await peer.request('session/prompt', {
-                sessionId,
-                prompt: [{ type: 'text', text: cmd }],
-              });
-              console.log(`[result] stopReason: ${pRes.stopReason}`);
-            } catch (e: any) {
-              console.error('[error]', e?.message || String(e));
-            }
-            isPrompting = false;
-          }
-        } else if (cmd.startsWith(':ask ')) {
-          // Handle natural language ask command (Phase 7a/7c)
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            // Extract text after :ask, checking for --with-image flag
-            let askText = cmd.substring(5).trim();
-            let withImage = false;
-
-            // Check for --with-image flag (Phase 7c)
-            if (askText.startsWith('--with-image ')) {
-              withImage = true;
-              askText = askText.substring(13).trim(); // Remove flag
-            }
-
-            // Remove surrounding quotes if present
-            if (
-              (askText.startsWith('"') && askText.endsWith('"')) ||
-              (askText.startsWith("'") && askText.endsWith("'"))
-            ) {
-              askText = askText.slice(1, -1);
-            }
-            if (!askText) {
-              console.log('Usage: :ask [--with-image] <text>. Example: :ask --with-image "fix white balance"');
-            } else {
-              isPrompting = true;
-              // Pause readline to prevent interference
-              rl.pause();
-              console.log(`Processing: ${askText}${withImage ? ' (with image)' : ''}`);
-              try {
-                // Include the --with-image flag in the command if present
-                const commandText = withImage ? `:ask --with-image ${askText}` : `:ask ${askText}`;
-                const pRes = await peer.request('session/prompt', {
-                  sessionId,
-                  prompt: [{ type: 'text', text: commandText }],
-                });
-                // Give time for all output to be displayed
-                await new Promise(resolve => setTimeout(resolve, 100));
-                console.log(`[result] stopReason: ${pRes.stopReason}`);
-                // Resume readline
-                rl.resume();
-              } catch (e: any) {
-                console.error('[error]', e?.message || String(e));
-                rl.resume();
-              }
-              isPrompting = false;
-            }
-          }
-        } else if (cmd.startsWith(':export')) {
-          // Handle export command
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            isPrompting = true;
-            console.log('Preparing export...');
-
-            // Set up permission handler before sending the prompt
-            peer.on('session/request_permission', (msg: any) => {
-              // Handle both notification style (params) and request style (full object)
-              const params = msg.params || msg;
-              const requestId = msg.id;
-
-              if (params && params.title) {
-                const { title, explanation, operations } = params;
-                console.log('\n📝 Permission Request:');
-                console.log(`   Title: ${title}`);
-                console.log(`   Explanation: ${explanation}`);
-                if (operations) {
-                  console.log('   Operations:');
-                  operations.forEach((op: any) => {
-                    const sizeInfo = op.bytesApprox ? ` (~${Math.round(op.bytesApprox / 1024)}KB)` : '';
-                    console.log(`     - ${op.kind}: ${path.basename(op.uri)}${sizeInfo}`);
-                  });
-                }
-                console.log('   [Auto-approving for demo]');
-
-                // Send approval response if we have an id
-                if (requestId !== undefined) {
-                  const response = {
-                    jsonrpc: '2.0',
-                    id: requestId,
-                    result: { approved: true },
-                  };
-                  peer.send(response);
-                }
-              }
-            });
-
-            try {
-              const pRes = await peer.request('session/prompt', {
-                sessionId,
-                prompt: [{ type: 'text', text: cmd }],
-                cwd, // Pass CWD for resolving paths
-              });
-              console.log(`[result] stopReason: ${pRes.stopReason}`);
-            } catch (e: any) {
-              console.error('[error]', e?.message || String(e));
-            }
-            isPrompting = false;
-          }
-        } else if (cmd.startsWith(':open ')) {
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            const parts = cmd.substring(6).trim().split(/\s+/);
-            if (parts.length === 0 || parts[0] === '') {
-              console.log('Usage: :open <path1> [path2...]');
-            } else {
-              isPrompting = true;
-              thumbnails.clear(); // Clear previous thumbnails
-              console.log('Opening resources...');
-
-              // Build prompt with text and resource_links
-              const prompt: PromptContent[] = [{ type: 'text', text: 'open assets' }];
-
-              // Convert paths to absolute file:// URIs
-              const resources: ContentBlockResourceLink[] = parts.map((p) => {
-                const absPath = path.resolve(p);
-                const basename = path.basename(absPath);
-                const uri = pathToFileURL(absPath).href;
-                const mimeType = guessMimeType(basename);
-
-                return {
-                  type: 'resource_link' as const,
-                  uri,
-                  name: basename,
-                  ...(mimeType && { mimeType }),
-                };
-              });
-
-              prompt.push(...resources);
-
-              // Display table
-              console.log('\nResources:');
-              console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
-              console.log('----\t\t---\t\t\t\t----\t\t------');
-              resources.forEach((r) => {
-                const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
-                console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tSENDING`);
-              });
-
-              // Log the prompt summary
-              logger.line('info', {
-                prompt_summary: `${resources.length} resources: ${resources.map((r) => r.name).join(', ')}`,
-              });
-
-              try {
-                const pRes = await peer.request('session/prompt', {
-                  sessionId,
-                  prompt,
-                });
-                console.log(`\n[result] stopReason: ${pRes.stopReason}`);
-
-                // Update table with PROCESSED status
-                console.log('\nResources (updated):');
-                console.log('Name\t\tURI\t\t\t\tMIME\t\tStatus');
-                console.log('----\t\t---\t\t\t\t----\t\t------');
-                resources.forEach((r) => {
-                  const shortUri = r.uri.length > 30 ? '...' + r.uri.slice(-27) : r.uri;
-                  console.log(`${r.name}\t${shortUri}\t${r.mimeType || 'unknown'}\tPROCESSED`);
-                });
-
-                if (thumbnails.size > 0) {
-                  console.log(`\n${thumbnails.size} thumbnail(s) loaded. Use :gallery to view.`);
-                }
-              } catch (e: any) {
-                console.error('[error]', e?.message || String(e));
-              }
-              isPrompting = false;
-            }
-          }
-        } else if (cmd === ':cancel') {
-          if (!isPrompting) {
-            console.log('No prompt in progress to cancel.');
-          } else {
-            console.log('Sending cancel...');
-            peer.notify('session/cancel', { sessionId });
-          }
-        } else if (cmd === ':yes' || cmd === ':no') {
-          // Phase 7f: Handle confirmation responses
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            isPrompting = true;
-            console.log(`Sending: ${cmd}`);
-            try {
-              const pRes = await peer.request('session/prompt', {
-                sessionId,
-                prompt: [{ type: 'text', text: cmd }],
-              });
-              console.log(`[result] stopReason: ${pRes.stopReason}`);
-            } catch (e: any) {
-              console.error('[error]', e?.message || String(e));
-            }
-            isPrompting = false;
-          }
-        } else if (cmd.startsWith(':')) {
-          console.log(`Unknown command: ${cmd}`);
-        } else if (cmd.length > 0) {
-          // Send custom text (for future phases)
-          if (isPrompting) {
-            console.log('A prompt is already in progress. Use :cancel to cancel it.');
-          } else {
-            isPrompting = true;
-            console.log(`Sending: ${cmd}`);
-            try {
-              const pRes = await peer.request('session/prompt', {
-                sessionId,
-                prompt: [{ type: 'text', text: cmd }],
-              });
-              console.log(`[result] stopReason: ${pRes.stopReason}`);
-            } catch (e: any) {
-              console.error('[error]', e?.message || String(e));
-            }
-            isPrompting = false;
-          }
-        }
-
-        // Only re-prompt if we haven't received agent messages
-        // If we did receive messages, delay the prompt to ensure they're visible
-        if (hasReceivedAgentMessage) {
-          hasReceivedAgentMessage = false;
-          setTimeout(() => rl.prompt(), 100);
-        } else {
-          rl.prompt();
-        }
-      });
-
-      rl.on('close', () => {
-        process.exit(0);
-      });
-    } else {
-      // Default non-interactive mode: just send ping and exit
-      const pRes = await peer.request('session/prompt', {
-        sessionId,
-        prompt: [{ type: 'text', text: 'ping' }],
-      });
-      console.log(`[result] stopReason=${pRes.stopReason}`);
+    rl.on('close', () => {
       process.exit(0);
-    }
-  } catch (e: any) {
-    console.error('ERR', e?.message || String(e));
-    process.exit(1);
+    });
+  } else {
+    // Default non-interactive mode: just send ping and exit
+    const pRes = await peer.request('session/prompt', {
+      sessionId,
+      prompt: [{ type: 'text', text: 'ping' }],
+    });
+    console.log('Ping response:', pRes);
+    process.exit(0);
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((err) => {
+  console.error('Fatal error:', err);
   process.exit(1);
 });
